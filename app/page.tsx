@@ -1,7 +1,7 @@
-import AstaLive from "@/components/AstaLive";
+import Home from "@/components/Home";
 
 export const dynamic = "force-dynamic";
 
 export default function Page() {
-  return <AstaLive />;
+  return <Home />;
 }

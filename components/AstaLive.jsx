@@ -6,7 +6,7 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
 /* ============================ design tokens ============================ */
-const T = {
+export const T = {
   ink: "#141026",
   ink2: "#1E1734",
   ink3: "#2A2046",
@@ -32,9 +32,9 @@ const MANTRA_MACRO = {
   A: "A", Pc: "A",
 };
 const RUOLO_NOME = { P: "Portieri", D: "Difensori", C: "Centrocampisti", A: "Attaccanti" };
-const display = "'Bricolage Grotesque', 'Inter Tight', system-ui, sans-serif";
-const mono = "'Azeret Mono', ui-monospace, monospace";
-const body = "'Inter Tight', system-ui, sans-serif";
+export const display = "'Bricolage Grotesque', 'Inter Tight', system-ui, sans-serif";
+export const mono = "'Azeret Mono', ui-monospace, monospace";
+export const body = "'Inter Tight', system-ui, sans-serif";
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;600;800&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter+Tight:wght@400;500;600&display=swap');
@@ -203,10 +203,10 @@ function derive(setup, assigned) {
   return map;
 }
 
-const fmt = (n) => new Intl.NumberFormat("it-IT").format(n);
+export const fmt = (n) => new Intl.NumberFormat("it-IT").format(n);
 
 /* ============================ small UI pieces ============================ */
-function Chip({ ruolo, size = 22 }) {
+export function Chip({ ruolo, size = 22 }) {
   return (
     <span
       style={{
@@ -252,7 +252,7 @@ function ChipsMantra({ rm, size = 11 }) {
   );
 }
 
-function Btn({ children, onClick, disabled, tone = "solid", full, style = {} }) {
+export function Btn({ children, onClick, disabled, tone = "solid", full, style = {} }) {
   const base = {
     fontFamily: display,
     fontWeight: 800,
@@ -280,7 +280,7 @@ function Btn({ children, onClick, disabled, tone = "solid", full, style = {} }) 
   );
 }
 
-function Field({ label, children }) {
+export function Field({ label, children }) {
   return (
     <label className="block">
       <span style={{ color: T.dim, fontFamily: mono, fontSize: 10, letterSpacing: ".14em" }} className="uppercase">
@@ -291,7 +291,7 @@ function Field({ label, children }) {
   );
 }
 
-const inputStyle = {
+export const inputStyle = {
   width: "100%",
   background: T.ink,
   color: T.paper,
@@ -300,7 +300,7 @@ const inputStyle = {
   padding: "11px 12px",
 };
 
-function Sheet({ title, children, onClose }) {
+export function Sheet({ title, children, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(10,7,20,.7)" }}>
       <div
@@ -480,12 +480,13 @@ function Import({ onDone, mantra }) {
 }
 
 /* ============================ setup ============================ */
-function Setup({ onCreate, busy }) {
+export function Setup({ onCreate, busy }) {
   const [budget, setBudget] = useState(500);
   const [slots, setSlots] = useState({ P: 3, D: 8, C: 8, A: 6 });
   const [names, setNames] = useState(["", ""]);
   const [timer, setTimer] = useState(10);
   const [mode, setMode] = useState("classic");
+  const [nomeLega, setNomeLega] = useState("");
   const [players, setPlayers] = useState(null);
   const [step, setStep] = useState(1);
 
@@ -533,6 +534,14 @@ function Setup({ onCreate, busy }) {
               asta e contati nelle rose, così vedi se ti mancano un Dc o un W prima di svenarti su un'ala.
             </div>
           )}
+          <Field label="nome della lega">
+            <input
+              value={nomeLega}
+              onChange={(e) => setNomeLega(e.target.value)}
+              placeholder="Es. Lega Ele Luci"
+              style={inputStyle}
+            />
+          </Field>
           <Field label="crediti a testa">
             <input type="number" value={budget} onChange={(e) => setBudget(+e.target.value)} style={inputStyle} />
           </Field>
@@ -552,7 +561,7 @@ function Setup({ onCreate, busy }) {
           <Field label="secondi dall'ultimo rilancio (0 = chiude il banditore)">
             <input type="number" value={timer} onChange={(e) => setTimer(Math.max(0, +e.target.value))} style={{ ...inputStyle, fontFamily: mono }} />
           </Field>
-          <Btn full onClick={() => setStep(2)} disabled={budget < 1 || totSlots < 1}>
+          <Btn full onClick={() => setStep(2)} disabled={budget < 1 || totSlots < 1 || !nomeLega.trim()}>
             Avanti
           </Btn>
         </div>
@@ -618,6 +627,7 @@ function Setup({ onCreate, busy }) {
                       slots,
                       timer,
                       mode,
+                      nome: nomeLega.trim() || "Asta fantacalcio",
                       createdAt: Date.now(),
                       teams: teams.map((n, i) => ({ id: "t" + i + "-" + slug(n), name: n })),
                     },
@@ -639,13 +649,13 @@ function Setup({ onCreate, busy }) {
 }
 
 /* ============================ join ============================ */
-function Join({ setup, taken, onJoin, onReset }) {
+function Join({ setup, taken, onJoin, onReset, onShare, code }) {
   const [sel, setSel] = useState("");
   const [host, setHost] = useState(false);
   return (
     <div className="px-4 pb-10 pt-8 mx-auto" style={{ maxWidth: 480 }}>
       <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".22em", color: T.dim }} className="uppercase">
-        asta aperta · {fmt(setup.budget)} crediti
+        {setup.nome || "asta aperta"} · {code} · {fmt(setup.budget)} crediti
       </div>
       <h1 style={{ fontFamily: display, fontWeight: 800, fontSize: 36, color: T.paper, letterSpacing: "-0.03em", lineHeight: 1.05 }} className="mt-2 mb-6">
         Qual è la tua squadra?
@@ -685,6 +695,11 @@ function Join({ setup, taken, onJoin, onReset }) {
           Entra
         </Btn>
       </div>
+      <div className="mt-2">
+        <Btn tone="ghost" full onClick={onShare}>
+          Invita gli altri
+        </Btn>
+      </div>
       <button onClick={onReset} style={{ color: T.dim, fontFamily: mono, fontSize: 11 }} className="mt-8 underline">
         chiudi questa asta e ricomincia
       </button>
@@ -693,8 +708,24 @@ function Join({ setup, taken, onJoin, onReset }) {
 }
 
 /* ============================ auction ============================ */
-export default function App() {
-  const [phase, setPhase] = useState("boot"); // boot | setup | join | live | offline
+/** Condivide il link dell'asta: menu nativo su mobile, appunti altrove. */
+async function condividi(code, nome, say) {
+  const url = `${window.location.origin}/a/${code}`;
+  const testo = `${nome || "Asta fantacalcio"} — entra con il codice ${code}`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: nome || "Asta fantacalcio", text: testo, url });
+      return;
+    }
+    await navigator.clipboard.writeText(`${testo}\n${url}`);
+    say("Link copiato.");
+  } catch (e) {
+    if (e?.name !== "AbortError") say(`Codice asta: ${code}`);
+  }
+}
+
+export default function App({ code }) {
+  const [phase, setPhase] = useState("boot"); // boot | join | live | offline | assente
   const [setup, setSetup] = useState(null);
   const [players, setPlayers] = useState([]);
   const [live, setLive] = useState(EMPTY_LIVE);
@@ -718,34 +749,36 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const snap = await api.snapshot();
-        if (!snap.setup) {
-          setPhase("setup");
-          return;
-        }
+        const snap = await api.snapshot(code);
         setSetup(snap.setup);
         setPlayers(snap.players || []);
         setLive(snap.live || EMPTY_LIVE);
-        const mine = api.getMe();
+        api.ricorda({
+          code,
+          nome: snap.setup.nome,
+          squadre: snap.setup.teams.length,
+          mode: snap.setup.mode,
+        });
+        const mine = api.getMe(code);
         if (mine && snap.setup.teams.some((t) => t.id === mine.teamId)) {
           setMe(mine);
           setPhase("live");
         } else setPhase("join");
-      } catch {
-        setPhase("offline");
+      } catch (e) {
+        setPhase(e.notFound ? "assente" : "offline");
       }
     })();
-  }, []);
+  }, [code]);
 
   /* ---- poll ---- */
   const pull = useCallback(async () => {
     try {
-      const lv = await api.pollLive(liveRef.current?.rev ?? -1);
+      const lv = await api.pollLive(code, liveRef.current?.rev ?? -1);
       if (lv) setLive(lv);
     } catch {
       /* rete ballerina: riprova al giro dopo */
     }
-  }, []);
+  }, [code]);
   useEffect(() => {
     if (phase !== "live") return;
     const a = setInterval(pull, 1200);
@@ -773,7 +806,7 @@ export default function App() {
   /* ---- writes ---- */
   const run = async (action, payload, label) => {
     try {
-      const lv = await api.act(action, payload);
+      const lv = await api.act(action, { code, ...payload });
       if (lv && lv.rev !== undefined) setLive(lv);
       return true;
     } catch (e) {
@@ -807,41 +840,24 @@ export default function App() {
   }, [now, lot, me]);
 
   /* ---- lifecycle actions ---- */
-  const create = async ({ setup: s, players: p }) => {
-    setBusy(true);
-    try {
-      await api.act("create", { setup: s, players: p });
-      setSetup(s);
-      setPlayers(p);
-      setLive(EMPTY_LIVE);
-      setPhase("join");
-    } catch (e) {
-      say(e.message || "Non riesco a salvare l'asta.");
-    }
-    setBusy(false);
-  };
-
   const join = async (m) => {
-    api.setMe(m);
+    api.setMe(code, m);
     setMe(m);
     setPhase("live");
     pull();
   };
 
   const reset = async () => {
-    if (!window.confirm("Cancello asta, rose e listone per tutti. Procedo?")) return;
+    if (!window.confirm("Cancello questa asta, rose e listone per tutti. Procedo?")) return;
     try {
-      await api.act("reset");
+      await api.act("reset", { code });
     } catch (e) {
       say(e.message);
       return;
     }
-    api.clearMe();
-    setSetup(null);
-    setPlayers([]);
-    setLive(EMPTY_LIVE);
-    setMe(null);
-    setPhase("setup");
+    api.clearMe(code);
+    api.dimentica(code);
+    window.location.href = "/";
   };
 
   /* ============================ render ============================ */
@@ -869,17 +885,33 @@ export default function App() {
       </Shell>
     );
 
-  if (phase === "setup")
+  if (phase === "assente")
     return (
       <Shell>
-        <Setup onCreate={create} busy={busy} />
+        <div className="px-6 pt-16" style={{ color: T.paper, fontFamily: body }}>
+          <h1 style={{ fontFamily: display, fontWeight: 800, fontSize: 28 }}>Asta non trovata</h1>
+          <p className="mt-3" style={{ color: T.dim }}>
+            Il codice <b style={{ fontFamily: mono }}>{code}</b> non corrisponde a nessuna asta. Controlla il
+            link, oppure l'asta è stata chiusa.
+          </p>
+          <div className="mt-5">
+            <Btn onClick={() => (window.location.href = "/")}>Torna all'inizio</Btn>
+          </div>
+        </div>
       </Shell>
     );
 
   if (phase === "join")
     return (
       <Shell>
-        <Join setup={setup} taken={[]} onJoin={join} onReset={reset} />
+        <Join
+          setup={setup}
+          code={code}
+          taken={[]}
+          onJoin={join}
+          onReset={reset}
+          onShare={() => condividi(code, setup.nome, say)}
+        />
       </Shell>
     );
 
@@ -894,7 +926,7 @@ export default function App() {
           <div>
             <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase">
               {teamName(me.teamId)}
-              {me.host ? " · banditore" : ""}
+              {me.host ? " · banditore" : ""} · {code}
             </div>
             <div style={{ fontFamily: mono, fontWeight: 800, fontSize: 26, color: T.paper, lineHeight: 1.1 }}>
               {fmt(mine.left)}
@@ -1023,6 +1055,9 @@ export default function App() {
           <Btn tone="ghost" full onClick={() => setSheet("rose")}>
             Rose e crediti
           </Btn>
+          <Btn tone="ghost" onClick={() => condividi(code, setup.nome, say)}>
+            Invita
+          </Btn>
           {me.host && (
             <Btn tone="ghost" onClick={undo} disabled={!live.assigned.length}>
               Annulla ultimo
@@ -1133,7 +1168,7 @@ export default function App() {
 }
 
 /* ============================ shell ============================ */
-function Shell({ children }) {
+export function Shell({ children }) {
   return (
     <div className="fc-root min-h-screen" style={{ background: T.ink, fontFamily: body }}>
       <style>{CSS}</style>

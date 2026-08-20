@@ -42,6 +42,7 @@ Settings → Environment Variables:
 |---|---|
 | `ASTA_PIN` | Se valorizzata, ogni modifica richiede questo PIN. Utile se il link gira su WhatsApp. |
 | `ASTA_NAMESPACE` | Cambiala (es. `asta:2027`) per ricominciare da zero conservando i dati vecchi. |
+| `ASTA_TTL_GIORNI` | Giorni di inattività dopo cui un'asta viene cancellata da Redis. Default 180. |
 
 ### 5. Deploy
 
@@ -53,10 +54,14 @@ Settings → Domains → aggiungi `asta.eleluci.it`. Su Aruba crea un CNAME `ast
 
 ## Come si usa
 
-1. Tu apri il sito, imposti crediti e slot, aggiungi le squadre, carichi il listone CSV/XLSX.
-2. Scegli la tua squadra spuntando **sono io il banditore**.
-3. Mandi il link agli altri: ognuno apre e scegle la propria squadra.
-4. Tu chiami i giocatori, loro rilanciano.
+1. Dalla home clicchi **Crea una nuova asta**: nome lega, modalità Classic o Mantra, crediti, slot, squadre, listone.
+2. Ottieni un **codice di 5 caratteri** e finisci su `/a/CODICE`.
+3. Scegli la tua squadra spuntando **sono io il banditore**, poi **Invita gli altri** per mandare il link.
+4. Gli altri aprono il link, oppure entrano dalla home digitando il codice.
+5. Tu chiami i giocatori, loro rilanciano.
+
+Più aste possono girare in parallelo: ognuna ha il suo codice e i suoi dati. La home elenca le aste viste
+da quel dispositivo (l'elenco sta nel browser, non sul server); da un altro telefono si entra col codice.
 
 ## Sviluppo locale
 
