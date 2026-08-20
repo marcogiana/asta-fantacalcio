@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import * as api from "@/lib/api";
+import { citazionePer } from "@/lib/citazioni";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
@@ -45,13 +46,15 @@ const CSS = `
 .fc-crawl{animation:fccrawl 22s linear infinite}
 @keyframes fccrawl{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
 .fc-pulse{animation:fcpulse 1.1s ease-in-out infinite}
+.fc-quote{animation:fcquote .5s cubic-bezier(.2,.9,.2,1)}
+@keyframes fcquote{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:none}}
 @keyframes fcpulse{0%,100%{opacity:.45}50%{opacity:1}}
 .fc-btn:active{transform:scale(.97)}
 .fc-btn{transition:transform .08s ease}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #F4F2F7;outline-offset:2px}
 input,select,textarea{font-family:${body};font-size:16px}
 ::placeholder{color:#7C7396}
-@media (prefers-reduced-motion:reduce){.fc-flip,.fc-crawl,.fc-pulse{animation:none!important}}
+@media (prefers-reduced-motion:reduce){.fc-flip,.fc-crawl,.fc-pulse,.fc-quote{animation:none!important}}
 `;
 
 /* ============================ stato ============================ */
@@ -734,6 +737,8 @@ export default function App({ code }) {
   const [sheet, setSheet] = useState(null); // 'call' | 'rose' | 'export'
   const [toast, setToast] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [ultimoColpo, setUltimoColpo] = useState(null);
+  const nAssegnati = useRef(null);
   const liveRef = useRef(EMPTY_LIVE);
   liveRef.current = live;
 
@@ -832,6 +837,42 @@ export default function App({ code }) {
     const last = live.assigned[live.assigned.length - 1];
     return run("undo", { nome: byId[last?.playerId]?.nome }, "l'annullamento");
   };
+
+  /* ---- citazione dopo ogni aggiudicazione ---- */
+  useEffect(() => {
+    const n = live.assigned.length;
+    // Al primo caricamento non mostro nulla: solo quando il numero cresce davvero.
+    if (nAssegnati.current === null) {
+      nAssegnati.current = n;
+      return;
+    }
+    if (n <= nAssegnati.current) {
+      nAssegnati.current = n;
+      return;
+    }
+    nAssegnati.current = n;
+    const last = live.assigned[n - 1];
+    setUltimoColpo({
+      nome: byId[last.playerId]?.nome || "",
+      team: teamName(last.teamId),
+      price: last.price,
+      cit: citazionePer(code, n - 1),
+      fino: Date.now() + 9000,
+    });
+  }, [live.assigned.length]);
+
+  // La card sparisce da sola, e comunque appena si apre un lotto nuovo.
+  useEffect(() => {
+    if (!ultimoColpo) return;
+    const ms = ultimoColpo.fino - Date.now();
+    if (ms <= 0) return setUltimoColpo(null);
+    const t = setTimeout(() => setUltimoColpo(null), ms);
+    return () => clearTimeout(t);
+  }, [ultimoColpo]);
+
+  useEffect(() => {
+    if (lot) setUltimoColpo(null);
+  }, [lot?.playerId]);
 
   /* ---- host auto-close on timer ---- */
   useEffect(() => {
@@ -952,7 +993,52 @@ export default function App({ code }) {
 
       {/* stage */}
       <div className="px-4 pt-5" style={{ paddingBottom: 150 }}>
-        {!lot ? (
+        {!lot && ultimoColpo ? (
+          <div
+            className="fc-quote overflow-hidden"
+            style={{ background: T.ink2, border: "1px solid " + T.line, borderRadius: 18 }}
+          >
+            <div className="px-5 pt-5 pb-4" style={{ borderBottom: "1px solid " + T.line }}>
+              <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".22em", color: T.dim }} className="uppercase">
+                aggiudicato
+              </div>
+              <div
+                style={{
+                  fontFamily: display,
+                  fontWeight: 800,
+                  fontSize: 26,
+                  lineHeight: 1.05,
+                  letterSpacing: "-0.03em",
+                  color: T.paper,
+                }}
+                className="mt-1"
+              >
+                {ultimoColpo.nome}
+              </div>
+              <div style={{ fontFamily: mono, fontSize: 12, color: T.dim }} className="mt-1">
+                {ultimoColpo.team} · {ultimoColpo.price} crediti
+              </div>
+            </div>
+            <div className="px-5 py-6">
+              <div
+                style={{
+                  fontFamily: display,
+                  fontWeight: 600,
+                  fontSize: 19,
+                  lineHeight: 1.3,
+                  letterSpacing: "-0.015em",
+                  color: T.paper,
+                }}
+              >
+                «{ultimoColpo.cit.t}»
+              </div>
+              <div style={{ fontFamily: mono, fontSize: 11, color: T.dim }} className="mt-3">
+                {ultimoColpo.cit.incerta ? "attribuita a " : "— "}
+                {ultimoColpo.cit.a}
+              </div>
+            </div>
+          </div>
+        ) : !lot ? (
           <div
             className="py-14 text-center"
             style={{ border: "1px dashed " + T.line, borderRadius: 18, color: T.dim, fontFamily: body }}
