@@ -19,6 +19,18 @@ const T = {
   A: "#E85145",
 };
 const RUOLI = ["P", "D", "C", "A"];
+const MANTRA = ["Por", "Dd", "Dc", "Ds", "E", "M", "C", "W", "T", "A", "Pc"];
+const MANTRA_NOME = {
+  Por: "Portiere", Dd: "Difensore destro", Dc: "Difensore centrale", Ds: "Difensore sinistro",
+  E: "Esterno", M: "Mediano", C: "Centrale", W: "Ala", T: "Trequartista",
+  A: "Attaccante", Pc: "Punta centrale",
+};
+// A quale macro-ruolo appartiene ogni ruolo Mantra: serve quando il listone non ha la colonna R.
+const MANTRA_MACRO = {
+  Por: "P", Dd: "D", Dc: "D", Ds: "D",
+  E: "C", M: "C", C: "C", W: "C", T: "C",
+  A: "A", Pc: "A",
+};
 const RUOLO_NOME = { P: "Portieri", D: "Difensori", C: "Centrocampisti", A: "Attaccanti" };
 const display = "'Bricolage Grotesque', 'Inter Tight', system-ui, sans-serif";
 const mono = "'Azeret Mono', ui-monospace, monospace";
@@ -64,11 +76,30 @@ function normRuolo(v) {
   return null;
 }
 
+function normMantra(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (!s) return null;
+  const hit = MANTRA.find((m) => m.toLowerCase() === s);
+  return hit || null;
+}
+
+/** "Dc;Dd" oppure "W/T" -> ["Dc","Dd"]. I listoni usano separatori diversi. */
+function parseMantra(v) {
+  return String(v || "")
+    .split(/[;/,|]+/)
+    .map(normMantra)
+    .filter(Boolean)
+    .filter((r, i, a) => a.indexOf(r) === i);
+}
+
 const HEAD = {
   nome: ["nome", "name", "calciatore", "giocatore", "player", "cognome"],
   squadra: ["squadra", "team", "club", "sq"],
   ruolo: ["ruolo", "r", "rm", "pos", "posizione", "role"],
-  quot: ["quotazione", "qt", "qa", "quot", "qtaa", "prezzo", "valore", "fvm"],
+  // L'ordine è la priorità: Qt.A viene prima di FVM.
+  quot: ["qt.a", "qt.a m", "quotazione", "qt", "qa", "quot", "prezzo", "valore", "fvm"],
+  fcId: ["id", "id calciatore", "idcalciatore", "codice", "cod"],
+  rm: ["rm", "ruolo mantra", "r mantra", "ruolomantra", "mantra"],
 };
 const matchHead = (cell, keys) => {
   const s = String(cell || "").trim().toLowerCase();
@@ -97,11 +128,35 @@ function findHeaderRow(rows) {
 }
 
 function guessCols(header) {
+  const used = new Set();
+  const norm = (c) => String(c || "").trim().toLowerCase();
+  // Prima la corrispondenza esatta, poi il prefisso: altrimenti "r" si mangerebbe "rm".
   const pick = (keys) => {
-    const i = header.findIndex((c) => matchHead(c, keys));
-    return i >= 0 ? i : -1;
+    // Scorro le chiavi in ordine di priorità: la prima che trova una colonna vince.
+    for (const k of keys) {
+      const exact = header.findIndex((c, idx) => !used.has(idx) && norm(c) === k);
+      if (exact >= 0) {
+        used.add(exact);
+        return exact;
+      }
+    }
+    for (const k of keys) {
+      const pre = header.findIndex((c, idx) => !used.has(idx) && norm(c).startsWith(k));
+      if (pre >= 0) {
+        used.add(pre);
+        return pre;
+      }
+    }
+    return -1;
   };
-  return { nome: pick(HEAD.nome), squadra: pick(HEAD.squadra), ruolo: pick(HEAD.ruolo), quot: pick(HEAD.quot) };
+  // L'ordine conta: i nomi più specifici per primi.
+  const fcId = pick(HEAD.fcId);
+  const rm = pick(HEAD.rm);
+  const ruolo = pick(HEAD.ruolo);
+  const nome = pick(HEAD.nome);
+  const squadra = pick(HEAD.squadra);
+  const quot = pick(HEAD.quot);
+  return { nome, squadra, ruolo, quot, fcId, rm };
 }
 
 function buildPlayers(rows, headerRow, cols) {
@@ -111,14 +166,18 @@ function buildPlayers(rows, headerRow, cols) {
     const r = rows[i] || [];
     const nome = String(r[cols.nome] ?? "").trim();
     if (!nome) continue;
-    const ruolo = normRuolo(cols.ruolo >= 0 ? r[cols.ruolo] : "");
+    const rm = cols.rm >= 0 ? parseMantra(r[cols.rm]) : [];
+    // Se il listone non ha la colonna R, ricavo il macro-ruolo dal primo ruolo Mantra.
+    const ruolo = normRuolo(cols.ruolo >= 0 ? r[cols.ruolo] : "") || (rm.length ? MANTRA_MACRO[rm[0]] : null);
     if (!ruolo) continue;
     const squadra = String(cols.squadra >= 0 ? r[cols.squadra] ?? "" : "").trim();
     const quot = Number(String(cols.quot >= 0 ? r[cols.quot] ?? "" : "").replace(",", ".")) || null;
+    // Id del listone ufficiale: serve per l'import su Leghe Fantacalcio.
+    const fcId = String(cols.fcId >= 0 ? r[cols.fcId] ?? "" : "").trim();
     let id = slug(nome + "-" + squadra);
     while (seen.has(id)) id += "x";
     seen.add(id);
-    out.push({ id, nome, squadra, ruolo, quot });
+    out.push({ id, fcId, nome, squadra, ruolo, quot, rm });
   }
   return out;
 }
@@ -162,6 +221,33 @@ function Chip({ ruolo, size = 22 }) {
       className="inline-flex items-center justify-center rounded shrink-0"
     >
       {ruolo}
+    </span>
+  );
+}
+
+/** Etichette dei ruoli Mantra, colorate secondo il macro-ruolo di appartenenza. */
+function ChipsMantra({ rm, size = 11 }) {
+  if (!rm || !rm.length) return null;
+  return (
+    <span className="inline-flex gap-1 flex-wrap">
+      {rm.map((m) => (
+        <span
+          key={m}
+          title={MANTRA_NOME[m]}
+          style={{
+            border: "1px solid " + T[MANTRA_MACRO[m]],
+            color: T[MANTRA_MACRO[m]],
+            fontFamily: mono,
+            fontWeight: 800,
+            fontSize: size,
+            padding: "1px 5px",
+            borderRadius: 5,
+            lineHeight: 1.5,
+          }}
+        >
+          {m}
+        </span>
+      ))}
     </span>
   );
 }
@@ -237,10 +323,10 @@ function Sheet({ title, children, onClose }) {
 }
 
 /* ============================ import panel ============================ */
-function Import({ onDone }) {
+function Import({ onDone, mantra }) {
   const [rows, setRows] = useState(null);
   const [headerRow, setHeaderRow] = useState(0);
-  const [cols, setCols] = useState({ nome: -1, squadra: -1, ruolo: -1, quot: -1 });
+  const [cols, setCols] = useState({ nome: -1, squadra: -1, ruolo: -1, quot: -1, fcId: -1, rm: -1 });
   const [err, setErr] = useState("");
   const [text, setText] = useState("");
 
@@ -327,8 +413,11 @@ function Import({ onDone }) {
                 ))}
               </select>
             </Field>
-            {["nome", "squadra", "ruolo", "quot"].map((k) => (
-              <Field key={k} label={k === "quot" ? "quotazione" : k}>
+            {["nome", "squadra", "ruolo", "quot", "fcId", "rm"].map((k) => (
+              <Field
+                key={k}
+                label={k === "quot" ? "quotazione" : k === "fcId" ? "id listone" : k === "rm" ? "ruoli mantra" : k}
+              >
                 <select value={cols[k]} onChange={(e) => setCols({ ...cols, [k]: +e.target.value })} style={inputStyle}>
                   <option value={-1}>— nessuna —</option>
                   {header.map((h, i) => (
@@ -352,6 +441,17 @@ function Import({ onDone }) {
                 </span>
               ))}
             </div>
+            {cols.rm >= 0 && (
+              <div style={{ fontFamily: mono, fontSize: 11, color: T.dim }} className="mt-2">
+                {preview.filter((p) => p.rm.length > 1).length} giocatori con più ruoli Mantra
+              </div>
+            )}
+            {cols.fcId < 0 && (
+              <div style={{ color: T.P, fontFamily: body, fontSize: 12, lineHeight: 1.45 }} className="mt-2">
+                Nessuna colonna Id riconosciuta. L'asta funziona comunque, ma l'export per Leghe Fantacalcio
+                dovrà appoggiarsi ai soli nomi.
+              </div>
+            )}
             <div className="mt-3 space-y-1">
               {preview.slice(0, 4).map((p) => (
                 <div key={p.id} className="flex items-center gap-2" style={{ fontFamily: body, fontSize: 13, color: T.paper }}>
@@ -364,7 +464,13 @@ function Import({ onDone }) {
             </div>
           </div>
 
-          <Btn full disabled={preview.length === 0} onClick={() => onDone(preview)}>
+          {mantra && cols.rm < 0 && (
+            <div style={{ color: T.A, fontFamily: body, fontSize: 13, lineHeight: 1.45 }}>
+              Modalità Mantra senza colonna RM: seleziona la colonna dei ruoli Mantra qui sopra, oppure usa il
+              listone ufficiale di Fantacalcio.it che la contiene.
+            </div>
+          )}
+          <Btn full disabled={preview.length === 0 || (mantra && cols.rm < 0)} onClick={() => onDone(preview)}>
             Conferma listone
           </Btn>
         </>
@@ -379,6 +485,7 @@ function Setup({ onCreate, busy }) {
   const [slots, setSlots] = useState({ P: 3, D: 8, C: 8, A: 6 });
   const [names, setNames] = useState(["", ""]);
   const [timer, setTimer] = useState(10);
+  const [mode, setMode] = useState("classic");
   const [players, setPlayers] = useState(null);
   const [step, setStep] = useState(1);
 
@@ -396,6 +503,36 @@ function Setup({ onCreate, busy }) {
 
       {step === 1 && (
         <div className="space-y-4">
+          <Field label="modalità">
+            <div className="flex gap-2">
+              {[
+                ["classic", "Classic"],
+                ["mantra", "Mantra"],
+              ].map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setMode(v)}
+                  className="flex-1 py-3 fc-btn"
+                  style={{
+                    background: mode === v ? T.paper : "transparent",
+                    color: mode === v ? T.ink : T.dim,
+                    border: "1px solid " + (mode === v ? T.paper : T.line),
+                    borderRadius: 10,
+                    fontFamily: display,
+                    fontWeight: 800,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          {mode === "mantra" && (
+            <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
+              Gli slot restano per macro-ruolo, come su Leghe Fantacalcio. I ruoli Mantra vengono mostrati in
+              asta e contati nelle rose, così vedi se ti mancano un Dc o un W prima di svenarti su un'ala.
+            </div>
+          )}
           <Field label="crediti a testa">
             <input type="number" value={budget} onChange={(e) => setBudget(+e.target.value)} style={inputStyle} />
           </Field>
@@ -456,7 +593,7 @@ function Setup({ onCreate, busy }) {
       {step === 3 && (
         <div className="space-y-4">
           {!players ? (
-            <Import onDone={setPlayers} />
+            <Import onDone={setPlayers} mantra={mode === "mantra"} />
           ) : (
             <>
               <div style={{ background: T.ink2, borderRadius: 12, border: "1px solid " + T.line }} className="p-4">
@@ -464,7 +601,8 @@ function Setup({ onCreate, busy }) {
                   {fmt(players.length)} giocatori · {teams.length} squadre
                 </div>
                 <div style={{ fontFamily: mono, fontSize: 12, color: T.dim }} className="mt-1">
-                  {fmt(budget)} crediti · {totSlots} slot · {timer > 0 ? timer + "s per rilanciare" : "chiusura manuale"}
+                  {mode === "mantra" ? "Mantra" : "Classic"} · {fmt(budget)} crediti · {totSlots} slot ·{" "}
+                  {timer > 0 ? timer + "s per rilanciare" : "chiusura manuale"}
                 </div>
               </div>
               <Btn tone="ghost" full onClick={() => setPlayers(null)}>
@@ -479,6 +617,7 @@ function Setup({ onCreate, busy }) {
                       budget,
                       slots,
                       timer,
+                      mode,
                       createdAt: Date.now(),
                       teams: teams.map((n, i) => ({ id: "t" + i + "-" + slug(n), name: n })),
                     },
@@ -620,6 +759,7 @@ export default function App() {
     };
   }, [phase, pull]);
 
+  const isMantra = setup?.mode === "mantra";
   const st = useMemo(() => (setup ? derive(setup, live.assigned) : null), [setup, live.assigned]);
   const mine = me && st ? st[me.teamId] : null;
   const lot = live.lot;
@@ -796,8 +936,9 @@ export default function App() {
           <div style={{ background: T.ink2, borderRadius: 18, border: "1px solid " + T.line, overflow: "hidden" }}>
             <div style={{ height: 5, background: roleColor }} />
             <div className="p-5">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Chip ruolo={lotPlayer?.ruolo || "C"} size={20} />
+                {isMantra && <ChipsMantra rm={lotPlayer?.rm} size={12} />}
                 <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".18em", color: T.dim }} className="uppercase">
                   {lotPlayer?.squadra || "—"}
                   {lotPlayer?.quot ? ` · quot ${lotPlayer.quot}` : ""}
@@ -957,6 +1098,7 @@ export default function App() {
         <Sheet title="Chiama un giocatore" onClose={() => setSheet(null)}>
           <Search
             players={players}
+            mantra={isMantra}
             assignedIds={assignedIds}
             onPick={async (p) => {
               await openLot(p);
@@ -968,7 +1110,13 @@ export default function App() {
 
       {sheet === "rose" && (
         <Sheet title="Rose e crediti" onClose={() => setSheet(null)}>
-          <Rose setup={setup} st={st} byId={byId} onExport={() => exportCsv(setup, live.assigned, byId)} />
+          <Rose setup={setup} st={st} byId={byId} mantra={isMantra} onExport={() => setSheet("export")} />
+        </Sheet>
+      )}
+
+      {sheet === "export" && (
+        <Sheet title="Esporta le rose" onClose={() => setSheet("rose")}>
+          <Export setup={setup} st={st} assigned={live.assigned} byId={byId} onSay={say} />
         </Sheet>
       )}
 
@@ -1053,17 +1201,19 @@ function CustomBid({ max, min, disabled, onBid }) {
 }
 
 /* ============================ search ============================ */
-function Search({ players, assignedIds, onPick }) {
+function Search({ players, assignedIds, onPick, mantra }) {
   const [q, setQ] = useState("");
   const [r, setR] = useState("");
+  const [mr, setMr] = useState("");
   const res = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return players
       .filter((p) => !assignedIds.has(p.id))
       .filter((p) => (r ? p.ruolo === r : true))
+      .filter((p) => (mr ? (p.rm || []).includes(mr) : true))
       .filter((p) => (needle ? p.nome.toLowerCase().includes(needle) || p.squadra.toLowerCase().includes(needle) : true))
       .slice(0, 60);
-  }, [players, q, r, assignedIds]);
+  }, [players, q, r, mr, assignedIds]);
 
   return (
     <div>
@@ -1102,6 +1252,29 @@ function Search({ players, assignedIds, onPick }) {
           </button>
         ))}
       </div>
+      {mantra && (
+        <div className="flex gap-1 flex-wrap mt-2">
+          {MANTRA.map((m) => (
+            <button
+              key={m}
+              onClick={() => setMr(mr === m ? "" : m)}
+              title={MANTRA_NOME[m]}
+              className="px-2 py-1"
+              style={{
+                background: mr === m ? T[MANTRA_MACRO[m]] : "transparent",
+                color: mr === m ? "#fff" : T.dim,
+                border: "1px solid " + (mr === m ? T[MANTRA_MACRO[m]] : T.line),
+                borderRadius: 999,
+                fontFamily: mono,
+                fontSize: 10,
+                fontWeight: 800,
+              }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mt-3 space-y-1">
         {res.length === 0 && (
           <div style={{ color: T.dim, fontFamily: body, fontSize: 13 }} className="py-6 text-center">
@@ -1116,8 +1289,9 @@ function Search({ players, assignedIds, onPick }) {
             style={{ background: T.ink, border: "1px solid " + T.line, borderRadius: 10 }}
           >
             <Chip ruolo={p.ruolo} size={20} />
-            <span className="flex-1" style={{ color: T.paper, fontFamily: display, fontWeight: 800, fontSize: 15 }}>
-              {p.nome}
+            <span className="flex-1 min-w-0" style={{ color: T.paper, fontFamily: display, fontWeight: 800, fontSize: 15 }}>
+              <span className="block truncate">{p.nome}</span>
+              {mantra && <ChipsMantra rm={p.rm} size={9} />}
             </span>
             <span style={{ color: T.dim, fontFamily: mono, fontSize: 11 }}>{p.squadra}</span>
             {p.quot ? <span style={{ color: T.paper, fontFamily: mono, fontSize: 12 }}>{p.quot}</span> : null}
@@ -1129,7 +1303,48 @@ function Search({ players, assignedIds, onPick }) {
 }
 
 /* ============================ rose ============================ */
-function Rose({ setup, st, byId, onExport }) {
+/** Quanti giocatori ha la squadra per ciascun ruolo Mantra. Chi ha due ruoli conta in entrambi. */
+function coperturaMantra(picks, byId) {
+  const c = {};
+  MANTRA.forEach((m) => (c[m] = 0));
+  picks.forEach((p) => (byId[p.playerId]?.rm || []).forEach((m) => (c[m] += 1)));
+  return c;
+}
+
+function CoperturaMantra({ picks, byId }) {
+  const c = coperturaMantra(picks, byId);
+  return (
+    <div className="mt-3 pt-3" style={{ borderTop: "1px solid " + T.line }}>
+      <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase mb-2">
+        copertura mantra
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {MANTRA.map((m) => (
+          <span
+            key={m}
+            title={MANTRA_NOME[m]}
+            style={{
+              border: "1px solid " + (c[m] ? T[MANTRA_MACRO[m]] : T.line),
+              color: c[m] ? T[MANTRA_MACRO[m]] : "#5C5478",
+              fontFamily: mono,
+              fontWeight: 800,
+              fontSize: 11,
+              padding: "2px 6px",
+              borderRadius: 6,
+            }}
+          >
+            {m} {c[m]}
+          </span>
+        ))}
+      </div>
+      <div style={{ color: T.dim, fontFamily: body, fontSize: 11, lineHeight: 1.4 }} className="mt-2">
+        Chi ha più ruoli conta in ciascuno, quindi la somma supera il numero di giocatori.
+      </div>
+    </div>
+  );
+}
+
+function Rose({ setup, st, byId, onExport, mantra }) {
   const [open, setOpen] = useState(setup.teams[0]?.id);
   return (
     <div>
@@ -1162,7 +1377,8 @@ function Rose({ setup, st, byId, onExport }) {
                           <div key={p.playerId} className="flex justify-between mt-1" style={{ fontFamily: body, fontSize: 13, color: T.paper }}>
                             <span>
                               {byId[p.playerId]?.nome}{" "}
-                              <span style={{ color: T.dim, fontSize: 11 }}>{byId[p.playerId]?.squadra}</span>
+                              <span style={{ color: T.dim, fontSize: 11 }}>{byId[p.playerId]?.squadra}</span>{" "}
+                              {mantra && <ChipsMantra rm={byId[p.playerId]?.rm} size={9} />}
                             </span>
                             <span style={{ fontFamily: mono }}>{p.price}</span>
                           </div>
@@ -1170,6 +1386,7 @@ function Rose({ setup, st, byId, onExport }) {
                       </div>
                     );
                   })}
+                  {mantra && <CoperturaMantra picks={s.picks} byId={byId} />}
                 </div>
               )}
             </div>
@@ -1178,27 +1395,144 @@ function Rose({ setup, st, byId, onExport }) {
       </div>
       <div className="mt-4">
         <Btn tone="ghost" full onClick={onExport}>
-          Scarica le rose in CSV
+          Esporta le rose
         </Btn>
       </div>
     </div>
   );
 }
 
-function exportCsv(setup, assigned, byId) {
-  const rows = [["Squadra", "Ruolo", "Giocatore", "Club", "Prezzo"]];
-  for (const t of setup.teams) {
-    for (const r of RUOLI) {
-      assigned
-        .filter((a) => a.teamId === t.id && a.ruolo === r)
-        .forEach((a) => rows.push([t.name, r, byId[a.playerId]?.nome || "", byId[a.playerId]?.squadra || "", a.price]));
-    }
-  }
-  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n");
-  const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" }));
+/* ============================ export ============================ */
+function download(name, content, mime = "text/csv;charset=utf-8", bom = true) {
+  const url = URL.createObjectURL(new Blob([(bom ? "\uFEFF" : "") + content], { type: mime }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = "rose-asta.csv";
+  a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
+const csvRow = (cells) => cells.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";");
+const fileSafe = (s) => slug(s) || "squadra";
+
+/** Righe di una singola rosa, ordinate per ruolo e prezzo decrescente. */
+function rosaRows(assigned, teamId, byId) {
+  const out = [];
+  for (const r of RUOLI) {
+    assigned
+      .filter((a) => a.teamId === teamId && a.ruolo === r)
+      .sort((a, b) => b.price - a.price)
+      .forEach((a) => {
+        const p = byId[a.playerId] || {};
+        out.push({ fcId: p.fcId || "", nome: p.nome || "", ruolo: r, club: p.squadra || "", price: a.price });
+      });
+  }
+  return out;
+}
+
+/**
+ * Formato Leghe Fantacalcio (verificato su un export reale della lega).
+ * Tre colonne senza intestazione: fantasquadra, id del listone, prezzo.
+ * Una riga "$,$,$" precede ogni blocco squadra. Nessuna virgoletta, fine riga LF.
+ */
+function exportLeghe(setup, assigned, byId) {
+  const lines = [];
+  for (const t of setup.teams) {
+    const rows = rosaRows(assigned, t.id, byId);
+    if (!rows.length) continue;
+    lines.push("$,$,$");
+    for (const r of rows) {
+      // La virgola nel nome squadra romperebbe il parsing: la sostituisco.
+      lines.push([String(t.name).replace(/,/g, " "), r.fcId, r.price].join(","));
+    }
+  }
+  // Newline finale: presente nei file prodotti dal sito.
+  download("rosters.csv", lines.join("\n") + "\n", "text/csv;charset=utf-8", false);
+}
+
+/** Riepilogo unico, con la fantasquadra come colonna. */
+function exportCompleto(setup, assigned, byId) {
+  const rows = [csvRow(["Fantasquadra", "Id", "Nome", "Ruolo", "Squadra", "Costo"])];
+  for (const t of setup.teams) {
+    rosaRows(assigned, t.id, byId).forEach((r) =>
+      rows.push(csvRow([t.name, r.fcId, r.nome, r.ruolo, r.club, r.price]))
+    );
+  }
+  download("rose-complete.csv", rows.join("\n"));
+}
+
+/** Testo da incollare nel gruppo. */
+function riepilogoTesto(setup, st, assigned, byId) {
+  const lines = [];
+  for (const t of setup.teams) {
+    const rows = rosaRows(assigned, t.id, byId);
+    const spesi = rows.reduce((s, r) => s + r.price, 0);
+    lines.push(`*${t.name}* — ${spesi}/${setup.budget} crediti, ${rows.length} giocatori`);
+    for (const r of RUOLI) {
+      const g = rows.filter((x) => x.ruolo === r);
+      if (g.length) lines.push(`${r}: ` + g.map((x) => `${x.nome} ${x.price}`).join(", "));
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+function Export({ setup, st, assigned, byId, onSay }) {
+  const incompleti = setup.teams.filter((t) => {
+    const need = RUOLI.reduce((s, r) => s + setup.slots[r], 0);
+    return st[t.id].picks.length < need;
+  });
+  const senzaId = assigned.filter((a) => !byId[a.playerId]?.fcId).length;
+
+  const copia = async () => {
+    const txt = riepilogoTesto(setup, st, assigned, byId);
+    try {
+      await navigator.clipboard.writeText(txt);
+      onSay("Riepilogo copiato.");
+    } catch {
+      download("rose.txt", txt, "text/plain;charset=utf-8");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {incompleti.length > 0 && (
+        <div style={{ color: T.P, fontFamily: body, fontSize: 13, lineHeight: 1.45 }}>
+          Rose ancora incomplete: {incompleti.map((t) => t.name).join(", ")}. Puoi esportare comunque.
+        </div>
+      )}
+      {senzaId > 0 && (
+        <div style={{ color: T.A, fontFamily: body, fontSize: 13, lineHeight: 1.45 }}>
+          {senzaId} giocatori sono senza Id del listone, e il file per Leghe Fantacalcio è costruito proprio
+          sugli Id. Puoi comunque scaricare il riepilogo completo e caricare le rose a mano.
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <Btn full disabled={senzaId > 0} onClick={() => exportLeghe(setup, assigned, byId)}>
+          File per Leghe Fantacalcio
+        </Btn>
+        <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
+          Scarica <code style={{ fontFamily: mono }}>rosters.csv</code> con tutte le rose. Su Leghe Fantacalcio
+          vai in Admin → Gestione Rose → Importa: il sito ti mostra le rose contenute nel file e ti fa
+          assegnare una squadra per volta.
+        </div>
+      </div>
+
+      <div className="space-y-2 pt-2">
+        <Btn tone="ghost" full onClick={() => exportCompleto(setup, assigned, byId)}>
+          Riepilogo completo in un CSV
+        </Btn>
+        <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
+          Tutte le rose in un unico file, con la fantasquadra in colonna. Comodo per archivio e per Excel.
+        </div>
+      </div>
+
+      <div className="space-y-2 pt-2">
+        <Btn tone="ghost" full onClick={copia}>
+          Copia riepilogo per WhatsApp
+        </Btn>
+      </div>
+    </div>
+  );
 }
