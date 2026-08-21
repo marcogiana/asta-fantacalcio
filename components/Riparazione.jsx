@@ -9,7 +9,7 @@ import {
   ESTERO,
   VOLONTARIO,
 } from "@/lib/regole";
-import { T, Btn, display, mono, body, Chip } from "@/components/AstaLive";
+import { T, Btn, display, mono, body, Chip, Import } from "@/components/AstaLive";
 
 const RUOLO_NOME = { P: "Portieri", D: "Difensori", C: "Centrocampisti", A: "Attaccanti" };
 
@@ -248,8 +248,85 @@ function Scambi({ setup, stato, byId, onScambio, busy }) {
   );
 }
 
+/* ============================ listone di gennaio ============================ */
+function Listone({ nListone, onListone, busy }) {
+  const [esito, setEsito] = useState(null);
+  const [conferma, setConferma] = useState(false);
+
+  if (esito)
+    return (
+      <div className="space-y-3">
+        <div style={{ fontFamily: display, fontWeight: 800, fontSize: 19, color: T.paper }}>Listone aggiornato</div>
+        <div style={{ fontFamily: body, fontSize: 13, color: T.dim, lineHeight: 1.55 }}>
+          {esito.nuovi} giocatori nuovi · {esito.aggiornati} aggiornati
+          {esito.conservati > 0 && ` · ${esito.conservati} non più nel listone ma ancora in rosa`}
+          {esito.rimossi > 0 && ` · ${esito.rimossi} tolti`}
+        </div>
+        {esito.conservati > 0 && (
+          <div style={{ color: T.P, fontFamily: body, fontSize: 12.5, lineHeight: 1.45 }}>
+            I {esito.conservati} giocatori non più in Serie A restano nelle rose finché non li svincoli come
+            «andato in un altro campionato»: così chi li ha comprati recupera l'intero importo.
+          </div>
+        )}
+        {esito.cambiSquadra?.length > 0 && (
+          <div>
+            <div
+              style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }}
+              className="uppercase mb-1"
+            >
+              hanno cambiato squadra
+            </div>
+            <div className="space-y-1">
+              {esito.cambiSquadra.slice(0, 12).map((c, i) => (
+                <div key={i} style={{ fontFamily: body, fontSize: 12.5, color: T.paper }}>
+                  {c.nome} <span style={{ color: T.dim }}>{c.da} → {c.a}</span>
+                </div>
+              ))}
+              {esito.cambiSquadra.length > 12 && (
+                <div style={{ color: T.dim, fontFamily: mono, fontSize: 11 }}>
+                  e altri {esito.cambiSquadra.length - 12}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <Btn tone="ghost" full onClick={() => { setEsito(null); setConferma(false); }}>
+          Fatto
+        </Btn>
+      </div>
+    );
+
+  if (!conferma)
+    return (
+      <div className="space-y-4">
+        <div style={{ fontFamily: mono, fontSize: 12, color: T.paper }}>{nListone} giocatori in listone</div>
+        <div style={{ color: T.dim, fontFamily: body, fontSize: 13, lineHeight: 1.55 }}>
+          A gennaio puoi caricare il listone aggiornato. Le rose non si toccano: chi ha cambiato squadra resta a
+          chi l'ha comprato, con il club nuovo. Chi non è più in Serie A rimane in rosa, segnalato, finché non lo
+          svincoli.
+        </div>
+        <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
+          Serve un listone con la colonna Id, la stessa usata alla creazione dell'asta: è l'Id che tiene insieme
+          rose e giocatori.
+        </div>
+        <Btn full disabled={busy} onClick={() => setConferma(true)}>
+          Carica il listone aggiornato
+        </Btn>
+      </div>
+    );
+
+  return (
+    <div className="space-y-3">
+      <Import onDone={async (players) => setEsito(await onListone(players))} />
+      <Btn tone="ghost" full onClick={() => setConferma(false)}>
+        Annulla
+      </Btn>
+    </div>
+  );
+}
+
 /* ============================ pannello ============================ */
-export default function Riparazione({ setup, stato, byId, onSvincola, onScambio, onFase, busy }) {
+export default function Riparazione({ setup, stato, byId, onSvincola, onScambio, onFase, onListone, nListone, busy }) {
   const [tab, setTab] = useState("svincoli");
   const aperta = setup.fase === "riparazione";
 
@@ -263,6 +340,10 @@ export default function Riparazione({ setup, stato, byId, onSvincola, onScambio,
         <Btn full disabled={busy} onClick={() => onFase("riparazione")}>
           Apri il mercato di riparazione
         </Btn>
+        <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
+          Se a gennaio esce un listone nuovo, caricalo dalla scheda Listone appena aperto il mercato: senza,
+          i giocatori arrivati in Serie A a gennaio non sono chiamabili.
+        </div>
       </div>
     );
 
@@ -275,12 +356,17 @@ export default function Riparazione({ setup, stato, byId, onSvincola, onScambio,
         <Tab attivo={tab === "scambi"} onClick={() => setTab("scambi")}>
           Scambi
         </Tab>
+        <Tab attivo={tab === "listone"} onClick={() => setTab("listone")}>
+          Listone
+        </Tab>
       </div>
 
       {tab === "svincoli" ? (
         <Svincoli setup={setup} stato={stato} byId={byId} onSvincola={onSvincola} busy={busy} />
-      ) : (
+      ) : tab === "scambi" ? (
         <Scambi setup={setup} stato={stato} byId={byId} onScambio={onScambio} busy={busy} />
+      ) : (
+        <Listone nListone={nListone} onListone={onListone} busy={busy} />
       )}
 
       <div className="pt-2">

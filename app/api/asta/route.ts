@@ -5,7 +5,7 @@ import {
 } from "@/lib/redis";
 import {
   replay, baseLotto, rimborsoPer, baseDopoSvincolo, verificaScambio,
-  ACQUISTO, SVINCOLO, SCAMBIO, ESTERO, VOLONTARIO,
+  ACQUISTO, SVINCOLO, SCAMBIO, ESTERO, VOLONTARIO, fondiListone,
 } from "@/lib/regole";
 
 export const runtime = "nodejs";
@@ -187,6 +187,29 @@ export async function POST(req: Request) {
       await pushTicker(code, fase === "riparazione" ? "Aperto il mercato di riparazione" : "Chiuso il mercato di riparazione");
       await bumpRev(code);
       return NextResponse.json({ ...(await readLive(code)), setup: { ...setup, fase } });
+    }
+
+    /* ---------- aggiornamento del listone (mercato di gennaio) ---------- */
+    case "listone": {
+      if (!Array.isArray(body.players) || !body.players.length) return bad("Listone vuoto.");
+
+      const vecchiRaw = await getRedis().get(k.players);
+      const vecchi: any[] = vecchiRaw ? asObj(vecchiRaw) : [];
+      const mov = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
+      const stato: any = replay(setup, mov);
+
+      // La fusione preserva le rose: l'identità è l'Id ufficiale, non nome e squadra.
+      const { players, esito } = fondiListone(vecchi, body.players, stato.inRosa);
+
+      await getRedis()
+        .pipeline()
+        .set(k.players, JSON.stringify(players))
+        .set(k.setup, JSON.stringify({ ...setup, listoneAt: Date.now() }))
+        .exec();
+      await pushTicker(code, `Listone aggiornato: ${esito.nuovi} nuovi, ${esito.aggiornati} aggiornati`);
+      await bumpRev(code);
+      await rinnovaScadenza(code);
+      return NextResponse.json({ ok: true, esito, players });
     }
 
     /* ---------- svincolo ---------- */

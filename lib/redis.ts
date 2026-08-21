@@ -99,20 +99,27 @@ const asObj = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
 
 export async function readLive(code: string) {
   const k = K(code);
-  const [rev, lotRaw, bidRaw, assignedRaw, tickerRaw] = (await getRedis()
+  const [rev, lotRaw, bidRaw, assignedRaw, tickerRaw, setupRaw] = (await getRedis()
     .pipeline()
     .get(k.rev)
     .get(k.lot)
     .get(k.bid)
     .lrange(k.assigned, 0, -1)
     .lrange(k.ticker, 0, -1)
+    .get(k.setup)
     .exec()) as any[];
 
   const lotBase = lotRaw ? asObj(lotRaw) : null;
   const { bid, bidderId, closesAt } = parseBid(bidRaw as string | null);
 
+  const setup: any = setupRaw ? asObj(setupRaw) : null;
+
   return {
     rev: Number(rev) || 0,
+    // Cambiano solo quando il banditore ricarica il listone o apre il mercato:
+    // servono ai client per accorgersi che devono rileggere i dati di base.
+    listoneAt: setup?.listoneAt || 0,
+    fase: setup?.fase || "asta",
     lot: lotBase ? { ...lotBase, bid, bidderId, closesAt } : null,
     assigned: ((assignedRaw as any[]) || []).map(asObj),
     ticker: ((tickerRaw as any[]) || []).map(asObj),
