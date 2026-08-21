@@ -1166,8 +1166,42 @@ export default function App({ code }) {
             mercato di riparazione aperto
           </div>
         )}
-        <div style={{ fontFamily: mono, fontSize: 10, color: T.dim }} className="mt-1">
-          offerta massima {fmt(mine.maxBid)} · devi lasciare 1 credito per ognuno dei {mine.slotsLeft} slot liberi
+        {/* Il tetto di spesa è il numero che serve mentre si rilancia: va letto in mezzo secondo. */}
+        <div
+          className="flex items-center justify-between gap-3 mt-2 px-3 py-2"
+          style={{
+            background: T.ink2,
+            border: "1px solid " + (mine.maxBid <= 5 ? alpha(T.P, 0.5) : T.line),
+            borderRadius: 11,
+          }}
+        >
+          <div className="min-w-0">
+            <div
+              style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }}
+              className="uppercase"
+            >
+              puoi offrire fino a
+            </div>
+            <div style={{ fontFamily: body, fontSize: 11.5, color: T.dim, lineHeight: 1.35 }} className="mt-1">
+              {mine.slotsLeft === 0
+                ? "Rosa completa."
+                : mine.slotsLeft === 1
+                ? "Ultimo slot: puoi spendere tutto quello che ti resta."
+                : `${mine.slotsLeft - 1} crediti bloccati per gli altri ${mine.slotsLeft - 1} slot da riempire.`}
+            </div>
+          </div>
+          <div
+            style={{
+              fontFamily: mono,
+              fontWeight: 800,
+              fontSize: 30,
+              lineHeight: 1,
+              letterSpacing: "-0.04em",
+              color: mine.maxBid <= 5 ? T.P : T.paper,
+            }}
+          >
+            {fmt(mine.maxBid)}
+          </div>
         </div>
       </div>
 
