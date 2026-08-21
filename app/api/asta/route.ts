@@ -3,6 +3,10 @@ import {
   getRedis, K, readLive, tryBid, bumpRev, pushTicker, parseBid,
   nuovoCodice, normCodice, CODICE_RE, TUTTE_LE_CHIAVI, rinnovaScadenza,
 } from "@/lib/redis";
+import {
+  replay, baseLotto, rimborsoPer, baseDopoSvincolo, verificaScambio,
+  ACQUISTO, SVINCOLO, SCAMBIO, ESTERO, VOLONTARIO,
+} from "@/lib/regole";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -84,9 +88,16 @@ export async function POST(req: Request) {
     case "open": {
       const { playerId, nome } = body;
       if (!playerId) return bad("Manca il giocatore.");
-      const already = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
-      if (already.some((a) => a.playerId === playerId)) return bad("Giocatore già assegnato.", 409);
-      await getRedis().pipeline().set(k.lot, JSON.stringify({ playerId, openedAt: Date.now() })).del(k.bid).exec();
+      const mov = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
+      const stato: any = replay(setup, mov);
+      if (stato.inRosa.has(playerId)) return bad("Giocatore già in rosa.", 409);
+      if (stato.fuori.has(playerId)) return bad("Giocatore uscito dal campionato: non è più acquistabile.", 409);
+      const base = baseLotto(stato, playerId);
+      await getRedis()
+        .pipeline()
+        .set(k.lot, JSON.stringify({ playerId, base, openedAt: Date.now() }))
+        .del(k.bid)
+        .exec();
       await pushTicker(code, `All'asta ${nome || playerId}`);
       await bumpRev(code);
       await rinnovaScadenza(code);
@@ -105,19 +116,16 @@ export async function POST(req: Request) {
       const team = setup.teams.find((t: any) => t.id === teamId);
       if (!team) return bad("Squadra sconosciuta.", 403);
 
-      // Tetto di spesa ricalcolato lato server: non si aggira dal client.
-      const assigned = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
-      const mine = assigned.filter((a) => a.teamId === teamId);
-      const spent = mine.reduce((s, a) => s + a.price, 0);
-      const counts: Record<string, number> = { P: 0, D: 0, C: 0, A: 0 };
-      mine.forEach((a) => (counts[a.ruolo] = (counts[a.ruolo] || 0) + 1));
-      const slotsLeft = ["P", "D", "C", "A"].reduce(
-        (s, r) => s + Math.max(0, setup.slots[r] - (counts[r] || 0)),
-        0
-      );
-      const maxBid = Math.max(0, setup.budget - spent - Math.max(0, slotsLeft - 1));
-      if (slotsLeft === 0) return bad("Rosa completa.", 409);
-      if (amount > maxBid) return bad(`Puoi offrire al massimo ${maxBid}.`, 409);
+      // Tetto di spesa e slot ricalcolati dal registro: non si aggira dal client.
+      const mov = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
+      const stato: any = replay(setup, mov);
+      const s = stato.squadre[teamId];
+      if (!s) return bad("Squadra sconosciuta.", 403);
+      if (s.slotsLeft === 0) return bad("Rosa completa.", 409);
+      if (amount > s.maxBid) return bad(`Puoi offrire al massimo ${s.maxBid}.`, 409);
+
+      const minimo = lot.base || 1;
+      if (amount < minimo) return bad(`La base d'asta è ${minimo}.`, 409);
 
       const closesAt = setup.timer > 0 ? Date.now() + setup.timer * 1000 : null;
       const beaten = await tryBid(code, amount, teamId, closesAt);
@@ -136,7 +144,14 @@ export async function POST(req: Request) {
       const lot: any = lotRaw ? asObj(lotRaw) : null;
       const { bid, bidderId } = parseBid(bidRaw as string | null);
       if (!lot || !bidderId || bid < 1) return bad("Niente da aggiudicare.", 409);
-      const entry = { playerId: lot.playerId, teamId: bidderId, price: bid, ruolo: body.ruolo, at: Date.now() };
+      const entry = {
+        tipo: ACQUISTO,
+        playerId: lot.playerId,
+        teamId: bidderId,
+        price: bid,
+        ruolo: body.ruolo,
+        at: Date.now(),
+      };
       await getRedis().pipeline().rpush(k.assigned, JSON.stringify(entry)).del(k.lot).del(k.bid).exec();
       const tn = setup.teams.find((t: any) => t.id === bidderId)?.name || bidderId;
       await pushTicker(code, `${body.nome || lot.playerId} a ${tn} per ${bid}`);
@@ -156,9 +171,72 @@ export async function POST(req: Request) {
     /* ---------- annulla l'ultima aggiudicazione ---------- */
     case "undo": {
       const last = await getRedis().rpop(k.assigned);
-      if (!last) return bad("Nessuna aggiudicazione da annullare.", 409);
-      await pushTicker(code, `Annullato: ${body.nome || asObj(last).playerId}`);
+      if (!last) return bad("Non c'è nulla da annullare.", 409);
+      const m = asObj(last);
+      const cosa =
+        m.tipo === SCAMBIO ? "scambio" : m.tipo === SVINCOLO ? `svincolo di ${body.nome || m.playerId}` : body.nome || m.playerId;
+      await pushTicker(code, `Annullato: ${cosa}`);
       await bumpRev(code);
+      return NextResponse.json(await readLive(code));
+    }
+
+    /* ---------- apre o chiude la finestra di riparazione ---------- */
+    case "fase": {
+      const fase = body.fase === "riparazione" ? "riparazione" : "asta";
+      await getRedis().set(k.setup, JSON.stringify({ ...setup, fase }));
+      await pushTicker(code, fase === "riparazione" ? "Aperto il mercato di riparazione" : "Chiuso il mercato di riparazione");
+      await bumpRev(code);
+      return NextResponse.json({ ...(await readLive(code)), setup: { ...setup, fase } });
+    }
+
+    /* ---------- svincolo ---------- */
+    case "svincola": {
+      if (setup.fase !== "riparazione") return bad("Gli svincoli si fanno a mercato aperto.", 409);
+      const { playerId, teamId, motivo, nome } = body;
+      if (motivo !== ESTERO && motivo !== VOLONTARIO) return bad("Tipo di svincolo non valido.");
+
+      const mov = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
+      const stato: any = replay(setup, mov);
+      const s = stato.squadre[teamId];
+      if (!s) return bad("Squadra sconosciuta.", 403);
+      const g = s.rosa.get(playerId);
+      if (!g) return bad("Il giocatore non è in questa rosa.", 409);
+
+      // Rimborso e base calcolati qui: il client non li decide.
+      const rimborso = rimborsoPer(g.price, motivo);
+      const entry: any = { tipo: SVINCOLO, playerId, teamId, motivo, rimborso, prezzo: g.price, at: Date.now() };
+      if (motivo === VOLONTARIO) entry.base = baseDopoSvincolo(g.price);
+
+      await getRedis().rpush(k.assigned, JSON.stringify(entry));
+      const tn = setup.teams.find((t: any) => t.id === teamId)?.name || teamId;
+      await pushTicker(
+        code,
+        motivo === ESTERO
+          ? `${nome || playerId} lascia il campionato: ${rimborso} a ${tn}`
+          : `${tn} svincola ${nome || playerId}: +${rimborso}, riparte da ${entry.base}`
+      );
+      await bumpRev(code);
+      await rinnovaScadenza(code);
+      return NextResponse.json(await readLive(code));
+    }
+
+    /* ---------- scambio ---------- */
+    case "scambio": {
+      if (setup.fase !== "riparazione") return bad("Gli scambi si fanno a mercato aperto.", 409);
+      const { teamA, teamB, playersA = [], playersB = [], nomiA, nomiB } = body;
+
+      const mov = ((await getRedis().lrange(k.assigned, 0, -1)) as any[]).map(asObj);
+      const stato: any = replay(setup, mov);
+      const errore = verificaScambio(setup, stato, teamA, teamB, playersA, playersB);
+      if (errore) return bad(errore, 409);
+
+      const entry = { tipo: SCAMBIO, teamA, teamB, playersA, playersB, at: Date.now() };
+      await getRedis().rpush(k.assigned, JSON.stringify(entry));
+      const nA = setup.teams.find((t: any) => t.id === teamA)?.name || teamA;
+      const nB = setup.teams.find((t: any) => t.id === teamB)?.name || teamB;
+      await pushTicker(code, `Scambio ${nA} ⇄ ${nB}: ${nomiA || playersA.length} per ${nomiB || playersB.length}`);
+      await bumpRev(code);
+      await rinnovaScadenza(code);
       return NextResponse.json(await readLive(code));
     }
 

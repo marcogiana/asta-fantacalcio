@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import * as api from "@/lib/api";
 import { citazionePer } from "@/lib/citazioni";
+import { replay, baseLotto } from "@/lib/regole";
+import Riparazione from "@/components/Riparazione";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
@@ -48,13 +50,29 @@ const CSS = `
 .fc-pulse{animation:fcpulse 1.1s ease-in-out infinite}
 .fc-quote{animation:fcquote .5s cubic-bezier(.2,.9,.2,1)}
 @keyframes fcquote{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:none}}
+.fc-ticket{animation:fcticket .34s cubic-bezier(.2,.9,.25,1) both}
+@keyframes fcticket{0%{opacity:0;transform:translateY(16px) scale(.985)}100%{opacity:1;transform:none}}
+/* Il timbro cade come un timbro vero: arriva grande, schiaccia, rimbalza. */
+.fc-stamp{animation:fcstamp .42s cubic-bezier(.2,1.5,.4,1) .16s both}
+@keyframes fcstamp{
+  0%{opacity:0;transform:rotate(-13deg) scale(2.8)}
+  55%{opacity:1;transform:rotate(-13deg) scale(.9)}
+  100%{opacity:.94;transform:rotate(-13deg) scale(1)}
+}
+.fc-late{animation:fclate .45s ease .42s both}
+@keyframes fclate{0%{opacity:0;transform:translateY(6px)}100%{opacity:1;transform:none}}
+.fc-count{animation:fccount .38s cubic-bezier(.2,1.3,.4,1) .1s both}
+@keyframes fccount{0%{opacity:0;transform:scale(.72)}100%{opacity:1;transform:none}}
 @keyframes fcpulse{0%,100%{opacity:.45}50%{opacity:1}}
 .fc-btn:active{transform:scale(.97)}
 .fc-btn{transition:transform .08s ease}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #F4F2F7;outline-offset:2px}
 input,select,textarea{font-family:${body};font-size:16px}
 ::placeholder{color:#7C7396}
-@media (prefers-reduced-motion:reduce){.fc-flip,.fc-crawl,.fc-pulse,.fc-quote{animation:none!important}}
+@media (prefers-reduced-motion:reduce){
+  .fc-flip,.fc-crawl,.fc-pulse,.fc-quote,.fc-ticket,.fc-stamp,.fc-late,.fc-count{animation:none!important}
+  .fc-stamp{opacity:.94;transform:rotate(-13deg)}
+}
 `;
 
 /* ============================ stato ============================ */
@@ -183,27 +201,6 @@ function buildPlayers(rows, headerRow, cols) {
     out.push({ id, fcId, nome, squadra, ruolo, quot, rm });
   }
   return out;
-}
-
-function derive(setup, assigned) {
-  const map = {};
-  for (const t of setup.teams) {
-    map[t.id] = { spent: 0, count: { P: 0, D: 0, C: 0, A: 0 }, picks: [] };
-  }
-  for (const a of assigned) {
-    const m = map[a.teamId];
-    if (!m) continue;
-    m.spent += a.price;
-    m.count[a.ruolo] = (m.count[a.ruolo] || 0) + 1;
-    m.picks.push(a);
-  }
-  for (const t of setup.teams) {
-    const m = map[t.id];
-    m.left = setup.budget - m.spent;
-    m.slotsLeft = RUOLI.reduce((s, r) => s + Math.max(0, setup.slots[r] - m.count[r]), 0);
-    m.maxBid = Math.max(0, m.left - Math.max(0, m.slotsLeft - 1));
-  }
-  return map;
 }
 
 export const fmt = (n) => new Intl.NumberFormat("it-IT").format(n);
@@ -711,6 +708,157 @@ function Join({ setup, taken, onJoin, onReset, onShare, code }) {
 }
 
 /* ============================ auction ============================ */
+/** Da "#2FA86B" a "rgba(47,168,107,.14)": serve per gli aloni sotto il prezzo. */
+function alpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/**
+ * Il cartellino del lotto aggiudicato.
+ * Il linguaggio è quello della sala d'asta: un biglietto con la tacca laterale,
+ * il timbro che cade di sbieco e la parte staccabile in fondo con la citazione.
+ */
+function Cartellino({ colpo, ruolo, mantra, io }) {
+  const c = T[ruolo] || T.C;
+  const notch = { position: "absolute", width: 22, height: 22, borderRadius: "50%", background: T.ink, top: "50%", marginTop: -11 };
+
+  return (
+    <div
+      className="fc-ticket relative overflow-hidden"
+      style={{
+        background: T.ink2,
+        border: "1px solid " + T.line,
+        borderRadius: 18,
+        boxShadow: `0 0 0 1px ${alpha(c, 0.18)}, 0 18px 40px -22px ${alpha(c, 0.55)}`,
+      }}
+    >
+      {/* banda del ruolo: la stessa che apre la card del lotto, così si riconosce la continuità */}
+      <div style={{ height: 5, background: c }} />
+
+      <div className="relative px-5 pt-5 pb-6">
+        {/* alone diffuso dietro il prezzo */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: `radial-gradient(120% 90% at 82% 78%, ${alpha(c, 0.16)}, transparent 62%)`,
+            pointerEvents: "none",
+          }}
+        />
+
+        {/* timbro */}
+        <div
+          aria-hidden
+          className="fc-stamp"
+          style={{
+            position: "absolute",
+            right: 14,
+            top: 14,
+            border: `2.5px solid ${c}`,
+            color: c,
+            borderRadius: 8,
+            padding: "4px 9px",
+            fontFamily: mono,
+            fontWeight: 800,
+            fontSize: 12,
+            letterSpacing: ".16em",
+            transformOrigin: "center",
+          }}
+        >
+          AGGIUDICATO
+        </div>
+
+        <div className="relative">
+          <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".22em", color: T.dim }} className="uppercase">
+            lotto {String(colpo.lotto).padStart(3, "0")}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap mt-2" style={{ maxWidth: "66%" }}>
+            <Chip ruolo={ruolo} size={18} />
+            {mantra && <ChipsMantra rm={colpo.rm} size={9} />}
+          </div>
+
+          <div
+            style={{
+              fontFamily: display,
+              fontWeight: 800,
+              fontSize: "clamp(26px, 8.2vw, 34px)",
+              lineHeight: 1,
+              letterSpacing: "-0.035em",
+              color: T.paper,
+              maxWidth: "92%",
+            }}
+            className="mt-3"
+          >
+            {colpo.nome}
+          </div>
+          <div style={{ fontFamily: mono, fontSize: 11, letterSpacing: ".16em", color: T.dim }} className="uppercase mt-1">
+            {colpo.club}
+          </div>
+
+          {/* la riga che conta: chi se l'è preso e a quanto */}
+          <div className="flex items-end justify-between gap-4 mt-5">
+            <div className="min-w-0">
+              <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase">
+                {io ? "è tuo" : "va a"}
+              </div>
+              <div
+                style={{
+                  fontFamily: display,
+                  fontWeight: 800,
+                  fontSize: "clamp(18px, 5.4vw, 22px)",
+                  letterSpacing: "-0.02em",
+                  color: T.paper,
+                  lineHeight: 1.15,
+                }}
+                className="truncate"
+              >
+                {colpo.team}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <div
+                className="fc-count"
+                style={{
+                  fontFamily: mono,
+                  fontWeight: 800,
+                  fontSize: "clamp(42px, 13vw, 56px)",
+                  lineHeight: 0.85,
+                  letterSpacing: "-0.05em",
+                  color: c,
+                }}
+              >
+                {colpo.price}
+              </div>
+              <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase mt-1">
+                crediti
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* perforazione: sopra il lotto, sotto la parte staccabile */}
+      <div className="relative" style={{ height: 1 }}>
+        <div style={{ ...notch, left: -11 }} />
+        <div style={{ ...notch, right: -11 }} />
+        <div style={{ borderTop: "1px dashed " + T.line, margin: "0 14px" }} />
+      </div>
+
+      <div className="fc-late px-5 py-5">
+        <div style={{ fontFamily: display, fontWeight: 600, fontSize: 17, lineHeight: 1.32, letterSpacing: "-0.012em", color: T.paper }}>
+          «{colpo.cit.t}»
+        </div>
+        <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: T.dim }} className="mt-2">
+          {colpo.cit.incerta ? "attribuita a " : "— "}
+          {colpo.cit.a}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Condivide il link dell'asta: menu nativo su mobile, appunti altrove. */
 async function condividi(code, nome, say) {
   const url = `${window.location.origin}/a/${code}`;
@@ -798,13 +946,16 @@ export default function App({ code }) {
   }, [phase, pull]);
 
   const isMantra = setup?.mode === "mantra";
-  const st = useMemo(() => (setup ? derive(setup, live.assigned) : null), [setup, live.assigned]);
+  // Le rose sono ricostruite rigiocando il registro: acquisti, svincoli e scambi.
+  const stato = useMemo(() => (setup ? replay(setup, live.assigned) : null), [setup, live.assigned]);
+  const st = stato?.squadre;
   const mine = me && st ? st[me.teamId] : null;
+  const inRiparazione = setup?.fase === "riparazione";
   const lot = live.lot;
   const lotPlayer = lot ? byId[lot.playerId] : null;
   const assignedIds = useMemo(() => new Set(live.assigned.map((a) => a.playerId)), [live.assigned]);
 
-  const canBidRole = lotPlayer && mine ? mine.count[lotPlayer.ruolo] < setup.slots[lotPlayer.ruolo] : false;
+  const canBidRole = lotPlayer && mine ? mine.conta[lotPlayer.ruolo] < setup.slots[lotPlayer.ruolo] : false;
   const isLeader = lot && me && lot.bidderId === me.teamId;
   const secsLeft = lot && lot.closesAt ? Math.max(0, Math.ceil((lot.closesAt - now) / 1000)) : null;
 
@@ -852,13 +1003,26 @@ export default function App({ code }) {
     }
     nAssegnati.current = n;
     const last = live.assigned[n - 1];
+    const p = byId[last.playerId] || {};
+    const io = me && last.teamId === me.teamId;
     setUltimoColpo({
-      nome: byId[last.playerId]?.nome || "",
+      nome: p.nome || "",
+      club: p.squadra || "",
+      ruolo: last.ruolo || p.ruolo || "C",
+      rm: p.rm || [],
       team: teamName(last.teamId),
       price: last.price,
+      io,
+      lotto: n,
       cit: citazionePer(code, n - 1),
       fino: Date.now() + 9000,
     });
+    // Una vibrazione breve solo a chi ha vinto il giocatore: il telefono è in tasca o sul tavolo.
+    if (io && navigator.vibrate) {
+      try {
+        navigator.vibrate([14, 44, 22]);
+      } catch {}
+    }
   }, [live.assigned.length]);
 
   // La card sparisce da sola, e comunque appena si apre un lotto nuovo.
@@ -879,6 +1043,14 @@ export default function App({ code }) {
     if (!me?.host || !lot?.closesAt || !lot.bidderId) return;
     if (now >= lot.closesAt) assign();
   }, [now, lot, me]);
+
+  const svincola = (p) => run("svincola", p, "lo svincolo");
+  const scambio = (p) => run("scambio", p, "lo scambio");
+  const cambiaFase = async (fase) => {
+    const ok = await run("fase", { fase }, "il cambio di fase");
+    if (ok) setSetup((s) => ({ ...s, fase }));
+    return ok;
+  };
 
   /* ---- lifecycle actions ---- */
   const join = async (m) => {
@@ -979,13 +1151,21 @@ export default function App({ code }) {
               <div key={r} className="text-center">
                 <Chip ruolo={r} size={18} />
                 <div style={{ fontFamily: mono, fontSize: 11, color: T.paper, marginTop: 2 }}>
-                  {mine.count[r]}
+                  {mine.conta[r]}
                   <span style={{ color: T.dim }}>/{setup.slots[r]}</span>
                 </div>
               </div>
             ))}
           </div>
         </div>
+        {inRiparazione && (
+          <div
+            style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".18em", color: T.P }}
+            className="uppercase mt-1"
+          >
+            mercato di riparazione aperto
+          </div>
+        )}
         <div style={{ fontFamily: mono, fontSize: 10, color: T.dim }} className="mt-1">
           offerta massima {fmt(mine.maxBid)} · devi lasciare 1 credito per ognuno dei {mine.slotsLeft} slot liberi
         </div>
@@ -994,50 +1174,7 @@ export default function App({ code }) {
       {/* stage */}
       <div className="px-4 pt-5" style={{ paddingBottom: 150 }}>
         {!lot && ultimoColpo ? (
-          <div
-            className="fc-quote overflow-hidden"
-            style={{ background: T.ink2, border: "1px solid " + T.line, borderRadius: 18 }}
-          >
-            <div className="px-5 pt-5 pb-4" style={{ borderBottom: "1px solid " + T.line }}>
-              <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".22em", color: T.dim }} className="uppercase">
-                aggiudicato
-              </div>
-              <div
-                style={{
-                  fontFamily: display,
-                  fontWeight: 800,
-                  fontSize: 26,
-                  lineHeight: 1.05,
-                  letterSpacing: "-0.03em",
-                  color: T.paper,
-                }}
-                className="mt-1"
-              >
-                {ultimoColpo.nome}
-              </div>
-              <div style={{ fontFamily: mono, fontSize: 12, color: T.dim }} className="mt-1">
-                {ultimoColpo.team} · {ultimoColpo.price} crediti
-              </div>
-            </div>
-            <div className="px-5 py-6">
-              <div
-                style={{
-                  fontFamily: display,
-                  fontWeight: 600,
-                  fontSize: 19,
-                  lineHeight: 1.3,
-                  letterSpacing: "-0.015em",
-                  color: T.paper,
-                }}
-              >
-                «{ultimoColpo.cit.t}»
-              </div>
-              <div style={{ fontFamily: mono, fontSize: 11, color: T.dim }} className="mt-3">
-                {ultimoColpo.cit.incerta ? "attribuita a " : "— "}
-                {ultimoColpo.cit.a}
-              </div>
-            </div>
-          </div>
+          <Cartellino colpo={ultimoColpo} ruolo={ultimoColpo.ruolo} mantra={isMantra} io={ultimoColpo.io} />
         ) : !lot ? (
           <div
             className="py-14 text-center"
@@ -1079,7 +1216,11 @@ export default function App({ code }) {
               <div className="mt-6 flex items-end justify-between gap-4">
                 <div>
                   <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase">
-                    {lot.bidderId ? "in testa · " + teamName(lot.bidderId) : "base d'asta"}
+                    {lot.bidderId
+                      ? "in testa · " + teamName(lot.bidderId)
+                      : (lot.base || 1) > 1
+                      ? `svincolato · base ${lot.base}`
+                      : "base d'asta"}
                   </div>
                   <div
                     key={lot.bid + "-" + (lot.bidderId || "")}
@@ -1093,7 +1234,7 @@ export default function App({ code }) {
                       color: lot.bidderId ? roleColor : T.dim,
                     }}
                   >
-                    {lot.bid || 1}
+                    {lot.bid || lot.base || 1}
                   </div>
                 </div>
                 {secsLeft !== null && (
@@ -1151,6 +1292,13 @@ export default function App({ code }) {
           )}
         </div>
         {me.host && (
+          <div className="mt-2">
+            <Btn tone={inRiparazione ? "solid" : "ghost"} full onClick={() => setSheet("mercato")}>
+              {inRiparazione ? "Mercato aperto · svincoli e scambi" : "Mercato di riparazione"}
+            </Btn>
+          </div>
+        )}
+        {me.host && (
           <button onClick={reset} style={{ color: T.dim, fontFamily: mono, fontSize: 10 }} className="mt-6 underline">
             chiudi asta e ricomincia
           </button>
@@ -1166,7 +1314,9 @@ export default function App({ code }) {
           <>
             <div className="flex gap-2">
               {[1, 5, 10].map((inc) => {
-                const next = lot.bidderId ? lot.bid + inc : inc;
+                // Senza offerte si parte dalla base: 1, o il prezzo di ripartenza di uno svincolato.
+                const partenza = lot.base || 1;
+                const next = lot.bidderId ? lot.bid + inc : partenza + (inc === 1 ? 0 : inc);
                 const ok = canBidRole && !isLeader && next <= mine.maxBid;
                 return (
                   <button
@@ -1182,11 +1332,18 @@ export default function App({ code }) {
                     }}
                   >
                     <div style={{ fontFamily: mono, fontWeight: 800, fontSize: 22, lineHeight: 1 }}>{next}</div>
-                    <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".1em" }}>{lot.bidderId ? "+" + inc : "APRO"}</div>
+                    <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".1em" }}>
+                      {lot.bidderId ? "+" + inc : inc === 1 ? "BASE" : "+" + inc}
+                    </div>
                   </button>
                 );
               })}
-              <CustomBid max={mine.maxBid} min={(lot.bidderId ? lot.bid : 0) + 1} disabled={!canBidRole || isLeader} onBid={bid} />
+              <CustomBid
+              max={mine.maxBid}
+              min={lot.bidderId ? lot.bid + 1 : lot.base || 1}
+              disabled={!canBidRole || isLeader}
+              onBid={bid}
+            />
             </div>
             {isLeader && (
               <div style={{ fontFamily: mono, fontSize: 11, color: T[lotPlayer?.ruolo || "C"] }} className="text-center mt-2">
@@ -1235,9 +1392,23 @@ export default function App({ code }) {
         </Sheet>
       )}
 
+      {sheet === "mercato" && (
+        <Sheet title={inRiparazione ? "Mercato di riparazione" : "Riparazione"} onClose={() => setSheet(null)}>
+          <Riparazione
+            setup={setup}
+            stato={stato}
+            byId={byId}
+            busy={false}
+            onFase={cambiaFase}
+            onSvincola={svincola}
+            onScambio={scambio}
+          />
+        </Sheet>
+      )}
+
       {sheet === "export" && (
         <Sheet title="Esporta le rose" onClose={() => setSheet("rose")}>
-          <Export setup={setup} st={st} assigned={live.assigned} byId={byId} onSay={say} />
+          <Export setup={setup} st={st} byId={byId} onSay={say} />
         </Sheet>
       )}
 
@@ -1536,12 +1707,17 @@ function download(name, content, mime = "text/csv;charset=utf-8", bom = true) {
 const csvRow = (cells) => cells.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";");
 const fileSafe = (s) => slug(s) || "squadra";
 
-/** Righe di una singola rosa, ordinate per ruolo e prezzo decrescente. */
-function rosaRows(assigned, teamId, byId) {
+/**
+ * Righe di una singola rosa, ordinate per ruolo e prezzo decrescente.
+ * Parte dalle rose ricostruite dal registro, non dai movimenti grezzi:
+ * altrimenti gli svincolati resterebbero dentro e gli scambiati fuori.
+ */
+function rosaRows(st, teamId, byId) {
+  const picks = st[teamId]?.picks || [];
   const out = [];
   for (const r of RUOLI) {
-    assigned
-      .filter((a) => a.teamId === teamId && a.ruolo === r)
+    picks
+      .filter((a) => a.ruolo === r)
       .sort((a, b) => b.price - a.price)
       .forEach((a) => {
         const p = byId[a.playerId] || {};
@@ -1556,10 +1732,10 @@ function rosaRows(assigned, teamId, byId) {
  * Tre colonne senza intestazione: fantasquadra, id del listone, prezzo.
  * Una riga "$,$,$" precede ogni blocco squadra. Nessuna virgoletta, fine riga LF.
  */
-function exportLeghe(setup, assigned, byId) {
+function exportLeghe(setup, st, byId) {
   const lines = [];
   for (const t of setup.teams) {
-    const rows = rosaRows(assigned, t.id, byId);
+    const rows = rosaRows(st, t.id, byId);
     if (!rows.length) continue;
     lines.push("$,$,$");
     for (const r of rows) {
@@ -1572,10 +1748,10 @@ function exportLeghe(setup, assigned, byId) {
 }
 
 /** Riepilogo unico, con la fantasquadra come colonna. */
-function exportCompleto(setup, assigned, byId) {
+function exportCompleto(setup, st, byId) {
   const rows = [csvRow(["Fantasquadra", "Id", "Nome", "Ruolo", "Squadra", "Costo"])];
   for (const t of setup.teams) {
-    rosaRows(assigned, t.id, byId).forEach((r) =>
+    rosaRows(st, t.id, byId).forEach((r) =>
       rows.push(csvRow([t.name, r.fcId, r.nome, r.ruolo, r.club, r.price]))
     );
   }
@@ -1583,11 +1759,11 @@ function exportCompleto(setup, assigned, byId) {
 }
 
 /** Testo da incollare nel gruppo. */
-function riepilogoTesto(setup, st, assigned, byId) {
+function riepilogoTesto(setup, st, byId) {
   const lines = [];
   for (const t of setup.teams) {
-    const rows = rosaRows(assigned, t.id, byId);
-    const spesi = rows.reduce((s, r) => s + r.price, 0);
+    const rows = rosaRows(st, t.id, byId);
+    const spesi = st[t.id]?.spesi ?? rows.reduce((s, r) => s + r.price, 0);
     lines.push(`*${t.name}* — ${spesi}/${setup.budget} crediti, ${rows.length} giocatori`);
     for (const r of RUOLI) {
       const g = rows.filter((x) => x.ruolo === r);
@@ -1598,15 +1774,18 @@ function riepilogoTesto(setup, st, assigned, byId) {
   return lines.join("\n").trim();
 }
 
-function Export({ setup, st, assigned, byId, onSay }) {
+function Export({ setup, st, byId, onSay }) {
   const incompleti = setup.teams.filter((t) => {
     const need = RUOLI.reduce((s, r) => s + setup.slots[r], 0);
     return st[t.id].picks.length < need;
   });
-  const senzaId = assigned.filter((a) => !byId[a.playerId]?.fcId).length;
+  const senzaId = setup.teams.reduce(
+    (n, t) => n + (st[t.id]?.picks || []).filter((a) => !byId[a.playerId]?.fcId).length,
+    0
+  );
 
   const copia = async () => {
-    const txt = riepilogoTesto(setup, st, assigned, byId);
+    const txt = riepilogoTesto(setup, st, byId);
     try {
       await navigator.clipboard.writeText(txt);
       onSay("Riepilogo copiato.");
@@ -1630,7 +1809,7 @@ function Export({ setup, st, assigned, byId, onSay }) {
       )}
 
       <div className="space-y-2">
-        <Btn full disabled={senzaId > 0} onClick={() => exportLeghe(setup, assigned, byId)}>
+        <Btn full disabled={senzaId > 0} onClick={() => exportLeghe(setup, st, byId)}>
           File per Leghe Fantacalcio
         </Btn>
         <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
@@ -1641,7 +1820,7 @@ function Export({ setup, st, assigned, byId, onSay }) {
       </div>
 
       <div className="space-y-2 pt-2">
-        <Btn tone="ghost" full onClick={() => exportCompleto(setup, assigned, byId)}>
+        <Btn tone="ghost" full onClick={() => exportCompleto(setup, st, byId)}>
           Riepilogo completo in un CSV
         </Btn>
         <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
