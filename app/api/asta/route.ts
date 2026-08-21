@@ -201,15 +201,29 @@ export async function POST(req: Request) {
       // La fusione preserva le rose: l'identità è l'Id ufficiale, non nome e squadra.
       const { players, esito } = fondiListone(vecchi, body.players, stato.inRosa);
 
+      // Il report resta salvato: serve rileggerlo durante il mercato, non solo al caricamento.
+      const report = {
+        at: Date.now(),
+        aggiornati: esito.aggiornati,
+        rimossi: esito.rimossi,
+        nuovi: esito.nuoviList.slice(0, 300).map((p: any) => ({
+          id: p.id, fcId: p.fcId, nome: p.nome, squadra: p.squadra, ruolo: p.ruolo, quot: p.quot, rm: p.rm,
+        })),
+        usciti: esito.uscitiList.slice(0, 300).map((p: any) => ({
+          id: p.id, fcId: p.fcId, nome: p.nome, squadra: p.squadra, ruolo: p.ruolo, quot: p.quot,
+        })),
+        cambiSquadra: esito.cambiSquadra.slice(0, 300),
+      };
+
       await getRedis()
         .pipeline()
         .set(k.players, JSON.stringify(players))
-        .set(k.setup, JSON.stringify({ ...setup, listoneAt: Date.now() }))
+        .set(k.setup, JSON.stringify({ ...setup, listoneAt: Date.now(), report }))
         .exec();
       await pushTicker(code, `Listone aggiornato: ${esito.nuovi} nuovi, ${esito.aggiornati} aggiornati`);
       await bumpRev(code);
       await rinnovaScadenza(code);
-      return NextResponse.json({ ok: true, esito, players });
+      return NextResponse.json({ ok: true, esito, players, report });
     }
 
     /* ---------- svincolo ---------- */

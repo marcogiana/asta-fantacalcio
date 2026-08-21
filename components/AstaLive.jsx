@@ -1058,8 +1058,8 @@ export default function App({ code }) {
     try {
       const r = await api.act("listone", { code, players: nuovi });
       setPlayers(r.players);
-      setSetup((s) => ({ ...s, listoneAt: Date.now() }));
-      return r.esito;
+      setSetup((s) => ({ ...s, listoneAt: Date.now(), report: r.report }));
+      return r.report;
     } catch (e) {
       say(e.message || "Non riesco ad aggiornare il listone.");
       return null;

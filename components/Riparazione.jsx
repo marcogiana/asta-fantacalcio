@@ -248,79 +248,220 @@ function Scambi({ setup, stato, byId, onScambio, busy }) {
   );
 }
 
-/* ============================ listone di gennaio ============================ */
-function Listone({ nListone, onListone, busy }) {
-  const [esito, setEsito] = useState(null);
-  const [conferma, setConferma] = useState(false);
+/* ============================ report di gennaio ============================ */
 
-  if (esito)
-    return (
-      <div className="space-y-3">
-        <div style={{ fontFamily: display, fontWeight: 800, fontSize: 19, color: T.paper }}>Listone aggiornato</div>
-        <div style={{ fontFamily: body, fontSize: 13, color: T.dim, lineHeight: 1.55 }}>
-          {esito.nuovi} giocatori nuovi · {esito.aggiornati} aggiornati
-          {esito.conservati > 0 && ` · ${esito.conservati} non più nel listone ma ancora in rosa`}
-          {esito.rimossi > 0 && ` · ${esito.rimossi} tolti`}
+function Sezione({ titolo, conta, children }) {
+  if (!conta) return null;
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase">
+          {titolo}
+        </span>
+        <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 800, color: T.paper }}>{conta}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Riga({ p, destra, tono }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2"
+      style={{ background: T.ink, border: "1px solid " + T.line, borderRadius: 9 }}
+    >
+      <Chip ruolo={p.ruolo} size={16} />
+      <span className="flex-1 min-w-0 truncate" style={{ fontFamily: body, fontSize: 13.5, color: T.paper }}>
+        {p.nome} <span style={{ color: T.dim, fontSize: 11 }}>{p.squadra}</span>
+      </span>
+      <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 800, color: tono || T.dim }}>{destra}</span>
+    </div>
+  );
+}
+
+/** Testo del report, per incollarlo nel gruppo prima di cominciare. */
+function reportTesto(report, proprietari) {
+  const L = [];
+  if (report.usciti.length) {
+    L.push("*Hanno lasciato il campionato*");
+    report.usciti.forEach((p) => {
+      const o = proprietari[p.id];
+      L.push(`${p.nome} (${p.squadra}) — ${o ? `${o.team}, rimborso ${o.price}` : "svincolato"}`);
+    });
+    L.push("");
+  }
+  if (report.cambiSquadra.length) {
+    L.push("*Hanno cambiato squadra*");
+    report.cambiSquadra.forEach((c) => L.push(`${c.nome}: ${c.da} → ${c.a}`));
+    L.push("");
+  }
+  if (report.nuovi.length) {
+    L.push(`*Nuovi in listone* (${report.nuovi.length})`);
+    report.nuovi.slice(0, 40).forEach((p) => L.push(`${p.ruolo} ${p.nome} (${p.squadra})${p.quot ? ` — qt ${p.quot}` : ""}`));
+    if (report.nuovi.length > 40) L.push(`…e altri ${report.nuovi.length - 40}`);
+  }
+  return L.join("\n").trim();
+}
+
+function Report({ report, setup, stato, onSvincola, onChiudi, busy }) {
+  const [fatti, setFatti] = useState([]);
+
+  // Chi possiede i giocatori usciti, e quanto gli verrebbe rimborsato.
+  const proprietari = useMemo(() => {
+    const m = {};
+    for (const t of setup.teams) {
+      for (const p of stato.squadre[t.id]?.picks || []) {
+        m[p.playerId] = { teamId: t.id, team: t.name, price: p.price };
+      }
+    }
+    return m;
+  }, [setup, stato]);
+
+  const daSvincolare = report.usciti.filter((p) => proprietari[p.id] && !fatti.includes(p.id));
+
+  const svincolaTutti = async () => {
+    for (const p of daSvincolare) {
+      const o = proprietari[p.id];
+      const ok = await onSvincola({ playerId: p.id, teamId: o.teamId, motivo: ESTERO, nome: p.nome });
+      if (ok) setFatti((f) => [...f, p.id]);
+    }
+  };
+
+  const copia = async () => {
+    try {
+      await navigator.clipboard.writeText(reportTesto(report, proprietari));
+    } catch {}
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <div style={{ fontFamily: display, fontWeight: 800, fontSize: 20, color: T.paper }}>Listone aggiornato</div>
+        <div style={{ fontFamily: mono, fontSize: 11, color: T.dim }} className="mt-1">
+          {report.nuovi.length} nuovi · {report.aggiornati} aggiornati · {report.cambiSquadra.length} trasferiti
+          {report.rimossi > 0 && ` · ${report.rimossi} tolti`}
         </div>
-        {esito.conservati > 0 && (
-          <div style={{ color: T.P, fontFamily: body, fontSize: 12.5, lineHeight: 1.45 }}>
-            I {esito.conservati} giocatori non più in Serie A restano nelle rose finché non li svincoli come
-            «andato in un altro campionato»: così chi li ha comprati recupera l'intero importo.
+      </div>
+
+      <Sezione titolo="hanno lasciato il campionato" conta={report.usciti.length}>
+        <div className="space-y-1">
+          {report.usciti.map((p) => {
+            const o = proprietari[p.id];
+            const fatto = fatti.includes(p.id);
+            return (
+              <Riga
+                key={p.id}
+                p={p}
+                tono={fatto ? T.D : o ? T.A : T.dim}
+                destra={fatto ? "svincolato" : o ? `${o.team} · +${o.price}` : "libero"}
+              />
+            );
+          })}
+        </div>
+        {daSvincolare.length > 0 && (
+          <div className="mt-2">
+            <Btn full disabled={busy} onClick={svincolaTutti}>
+              Svincola tutti · rimborso pieno
+            </Btn>
+            <div style={{ color: T.dim, fontFamily: body, fontSize: 11.5, lineHeight: 1.45 }} className="mt-1">
+              Restituisce a ciascuna squadra l'intero importo pagato e libera gli slot. Puoi anche farlo uno alla
+              volta dalla scheda Svincoli.
+            </div>
           </div>
         )}
-        {esito.cambiSquadra?.length > 0 && (
-          <div>
+      </Sezione>
+
+      <Sezione titolo="hanno cambiato squadra" conta={report.cambiSquadra.length}>
+        <div className="space-y-1">
+          {report.cambiSquadra.map((c, i) => (
             <div
-              style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }}
-              className="uppercase mb-1"
+              key={i}
+              className="px-3 py-2"
+              style={{ background: T.ink, border: "1px solid " + T.line, borderRadius: 9, fontFamily: body, fontSize: 13 }}
             >
-              hanno cambiato squadra
+              <span style={{ color: T.paper }}>{c.nome}</span>{" "}
+              <span style={{ color: T.dim, fontSize: 11.5 }}>
+                {c.da} → {c.a}
+              </span>
             </div>
-            <div className="space-y-1">
-              {esito.cambiSquadra.slice(0, 12).map((c, i) => (
-                <div key={i} style={{ fontFamily: body, fontSize: 12.5, color: T.paper }}>
-                  {c.nome} <span style={{ color: T.dim }}>{c.da} → {c.a}</span>
-                </div>
-              ))}
-              {esito.cambiSquadra.length > 12 && (
-                <div style={{ color: T.dim, fontFamily: mono, fontSize: 11 }}>
-                  e altri {esito.cambiSquadra.length - 12}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        <Btn tone="ghost" full onClick={() => { setEsito(null); setConferma(false); }}>
-          Fatto
+          ))}
+        </div>
+      </Sezione>
+
+      <Sezione titolo="nuovi in listone" conta={report.nuovi.length}>
+        <div className="space-y-1">
+          {report.nuovi.map((p) => (
+            <Riga key={p.id} p={p} destra={p.quot ? `qt ${p.quot}` : ""} />
+          ))}
+        </div>
+      </Sezione>
+
+      <div className="space-y-2">
+        <Btn tone="ghost" full onClick={copia}>
+          Copia il report
+        </Btn>
+        <Btn tone="ghost" full onClick={onChiudi}>
+          Chiudi
         </Btn>
       </div>
+    </div>
+  );
+}
+
+/* ============================ listone di gennaio ============================ */
+function Listone({ nListone, report, setup, stato, onListone, onSvincola, busy }) {
+  const [fresco, setFresco] = useState(null);
+  const [conferma, setConferma] = useState(false);
+  const [apri, setApri] = useState(false);
+
+  const mostrato = fresco || (apri ? report : null);
+  if (mostrato)
+    return (
+      <Report
+        report={mostrato}
+        setup={setup}
+        stato={stato}
+        onSvincola={onSvincola}
+        busy={busy}
+        onChiudi={() => {
+          setFresco(null);
+          setApri(false);
+          setConferma(false);
+        }}
+      />
     );
 
-  if (!conferma)
+  if (conferma)
     return (
-      <div className="space-y-4">
-        <div style={{ fontFamily: mono, fontSize: 12, color: T.paper }}>{nListone} giocatori in listone</div>
-        <div style={{ color: T.dim, fontFamily: body, fontSize: 13, lineHeight: 1.55 }}>
-          A gennaio puoi caricare il listone aggiornato. Le rose non si toccano: chi ha cambiato squadra resta a
-          chi l'ha comprato, con il club nuovo. Chi non è più in Serie A rimane in rosa, segnalato, finché non lo
-          svincoli.
-        </div>
-        <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
-          Serve un listone con la colonna Id, la stessa usata alla creazione dell'asta: è l'Id che tiene insieme
-          rose e giocatori.
-        </div>
-        <Btn full disabled={busy} onClick={() => setConferma(true)}>
-          Carica il listone aggiornato
+      <div className="space-y-3">
+        <Import onDone={async (players) => setFresco(await onListone(players))} />
+        <Btn tone="ghost" full onClick={() => setConferma(false)}>
+          Annulla
         </Btn>
       </div>
     );
 
   return (
-    <div className="space-y-3">
-      <Import onDone={async (players) => setEsito(await onListone(players))} />
-      <Btn tone="ghost" full onClick={() => setConferma(false)}>
-        Annulla
+    <div className="space-y-4">
+      <div style={{ fontFamily: mono, fontSize: 12, color: T.paper }}>{nListone} giocatori in listone</div>
+      <div style={{ color: T.dim, fontFamily: body, fontSize: 13, lineHeight: 1.55 }}>
+        A gennaio carica il listone aggiornato. Le rose non si toccano: chi ha cambiato squadra resta a chi
+        l'ha comprato, con il club nuovo. Chi non è più in Serie A rimane in rosa, segnalato, finché non lo
+        svincoli.
+      </div>
+      <div style={{ color: T.dim, fontFamily: body, fontSize: 12, lineHeight: 1.45 }}>
+        Serve un listone con la colonna Id, la stessa usata alla creazione: è l'Id che tiene insieme rose e
+        giocatori.
+      </div>
+      <Btn full disabled={busy} onClick={() => setConferma(true)}>
+        Carica il listone aggiornato
       </Btn>
+      {report && (
+        <Btn tone="ghost" full onClick={() => setApri(true)}>
+          Rivedi l'ultimo report · {new Date(report.at).toLocaleDateString("it-IT")}
+        </Btn>
+      )}
     </div>
   );
 }
@@ -366,7 +507,15 @@ export default function Riparazione({ setup, stato, byId, onSvincola, onScambio,
       ) : tab === "scambi" ? (
         <Scambi setup={setup} stato={stato} byId={byId} onScambio={onScambio} busy={busy} />
       ) : (
-        <Listone nListone={nListone} onListone={onListone} busy={busy} />
+        <Listone
+          nListone={nListone}
+          report={setup.report}
+          setup={setup}
+          stato={stato}
+          onListone={onListone}
+          onSvincola={onSvincola}
+          busy={busy}
+        />
       )}
 
       <div className="pt-2">
