@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import * as api from "@/lib/api";
 import { Shell, Btn, Field, inputStyle, T, display, mono, body } from "@/components/AstaLive";
+import Installa from "@/components/Installa";
 
 const quando = (t) => {
   const g = Math.floor((Date.now() - t) / 86400000);
@@ -64,6 +65,8 @@ export default function Home() {
         <Btn full onClick={() => router.push("/nuova")}>
           Crea una nuova asta
         </Btn>
+
+        <Installa />
 
         <div className="mt-8">
           <Field label="entra con un codice">

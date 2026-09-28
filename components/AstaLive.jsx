@@ -5,6 +5,8 @@ import * as api from "@/lib/api";
 import { citazionePer } from "@/lib/citazioni";
 import { replay, baseLotto } from "@/lib/regole";
 import Riparazione from "@/components/Riparazione";
+import Installa from "@/components/Installa";
+import { useWakeLock } from "@/lib/pwa";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
@@ -700,6 +702,7 @@ function Join({ setup, taken, onJoin, onReset, onShare, code }) {
           Invita gli altri
         </Btn>
       </div>
+      <Installa compatto />
       <button onClick={onReset} style={{ color: T.dim, fontFamily: mono, fontSize: 11 }} className="mt-8 underline">
         chiudi questa asta e ricomincia
       </button>
@@ -899,6 +902,10 @@ export default function App({ code }) {
     setToast(m);
     setTimeout(() => setToast(""), 2600);
   };
+
+  // Schermo acceso mentre si è in asta: tra un lotto e l'altro il telefono
+  // resta sul tavolo, e ritrovarlo bloccato fa perdere il rilancio.
+  const schermoAcceso = useWakeLock(phase === "live");
 
   /* ---- boot ---- */
   useEffect(() => {
@@ -1162,6 +1169,9 @@ export default function App({ code }) {
             <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", color: T.dim }} className="uppercase">
               {teamName(me.teamId)}
               {me.host ? " · banditore" : ""} · {code}
+              {schermoAcceso && (
+                <span title="Lo schermo resta acceso durante l'asta" style={{ color: T.D }}> ●</span>
+              )}
             </div>
             <div style={{ fontFamily: mono, fontWeight: 800, fontSize: 26, color: T.paper, lineHeight: 1.1 }}>
               {fmt(mine.left)}
